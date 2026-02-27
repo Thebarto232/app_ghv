@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo;
+    <a href="{{ url_for('view_total_personal') }}">Dashboard</a> &rsaquo;
+    <a href="{{ url_for('dashboard_chart', chart_key=chart_key) }}">{{ chart_title }}</a> &rsaquo;
+    <span>{{ table_title }}{% if filter_val %} ({{ filter_val }}){% endif %}</span>
+</div>
+
+<div class="inline-table-container">
+    <div class="table-wrapper" style="overflow-x:auto;max-width:100%">
+        <table class="data-table inline-data-table" id="dashDataTable">
+            <thead>
+                <tr>
+                    {% for key, label in columns %}
+                    <th class="sortable" data-col="{{ loop.index0 }}">{{ label }}</th>
+                    {% endfor %}
+                    <th style="width:40px"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    {% for key, label in columns %}
+                    <td>
+                        {% set val = row[key] if key in row else '' %}
+                        {% if val is none %}
+                        {% elif key == 'departamento' %}
+                        <span class="badge-dept">{{ val }}</span>
+                        {% elif key == 'tipo_retiro' and val and 'PENDIENTE' in val|upper %}
+                        <span style="color:var(--accent);font-weight:600">{{ val }}</span>
+                        {% elif key in ('related_hijos', 'related_retirados') and val %}
+                        <span class="related-link">{{ val }}</span>
+                        {% else %}
+                        {{ val }}
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                    <td>
+                        <span class="material-symbols-outlined" style="color:var(--gray-400);font-size:18px">chevron_right</span>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const globalSearch = document.getElementById('globalSearch');
+if (globalSearch) {
+    globalSearch.addEventListener('input', function() {
+        const term = this.value.toLowerCase();
+        const rows = document.querySelectorAll('#dashDataTable tbody tr');
+        rows.forEach(row => {
+            row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none';
+        });
+    });
+}
+</script>
+{% endblock %}

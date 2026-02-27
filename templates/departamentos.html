@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+{% if can_admin %}
+<button class="btn btn-primary btn-sm" onclick="openDeptoModal()">
+    <span class="material-symbols-outlined" style="font-size:18px">add</span> Agregar
+</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if stats|default(none) %}
+<div class="stats-grid animate-in">
+    {% for stat in stats %}
+    <div class="stat-card" style="animation-delay:{{ loop.index0 * 80 }}ms">
+        <div class="stat-icon {{ stat.color }}">
+            <span class="material-symbols-outlined">{{ stat.icon }}</span>
+        </div>
+        <div class="stat-info">
+            <h3 class="count-up" data-target="{{ stat.value }}">0</h3>
+            <p>{{ stat.label }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="table-toolbar">
+    <div class="toolbar-left">
+        <div class="search-filter">
+            <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-secondary)">search</span>
+            <input type="text" id="tableFilter" placeholder="Buscar departamento..." autocomplete="off">
+        </div>
+    </div>
+    <div class="toolbar-right">
+        <span class="table-info" id="tableInfo">{{ rows|length }} registros</span>
+    </div>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table" id="mainTable">
+        <thead>
+            <tr>
+                <th data-sort>Departamento <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                <th data-sort style="text-align:center;width:160px">Presupuestados <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                {% if can_admin %}<th style="width:90px"></th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>{{ row.nombre }}</td>
+                <td style="text-align:center">{{ row.presupuestados or '—' }}</td>
+                {% if can_admin %}
+                <td>
+                    <div style="display:flex;gap:4px;justify-content:flex-end">
+                        <button class="btn-icon" title="Editar"
+                            onclick="editDepto({{ row.id }}, '{{ row.nombre }}', '{{ row.presupuestados or '' }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+                        </button>
+                        <button class="btn-icon" title="Eliminar" style="color:#ef4444"
+                            onclick="confirmDelete('{{ url_for('departamento_eliminar', id=row.id) }}', '{{ row.nombre }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+                        </button>
+                    </div>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal Crear/Editar Departamento -->
+{% if can_admin %}
+<div class="modal-overlay" id="deptoModal">
+    <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+            <h2 id="deptoModalTitle">Agregar Departamento</h2>
+            <button class="btn-icon" data-close-modal>
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <form id="deptoForm" method="POST" action="{{ url_for('departamento_nuevo') }}">
+            <input type="hidden" name="depto_id" id="deptoId" value="">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Nombre<span class="required">*</span></label>
+                    <input type="text" name="nombre" id="deptoNombre" class="form-input" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Presupuestados</label>
+                    <input type="number" name="presupuestados" id="deptoPresup" class="form-input" min="0">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <span class="material-symbols-outlined" style="font-size:18px">save</span> Guardar
+                </button>
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Confirmar Eliminar -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <h2>Confirmar Eliminación</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:20px">
+            ¿Eliminar <strong id="deleteItemName"></strong>? Esta acción no se puede deshacer.
+        </p>
+        <div class="form-actions" style="border-top:1px solid var(--border);padding-top:16px">
+            <form id="deleteForm" method="POST">
+                <button type="submit" class="btn btn-danger">
+                    <span class="material-symbols-outlined" style="font-size:18px">delete</span> Eliminar
+                </button>
+            </form>
+            <button class="btn btn-outline" data-close-modal>Cancelar</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openDeptoModal() {
+    document.getElementById('deptoModalTitle').textContent = 'Agregar Departamento';
+    document.getElementById('deptoForm').action = '{{ url_for("departamento_nuevo") }}';
+    document.getElementById('deptoId').value = '';
+    document.getElementById('deptoNombre').value = '';
+    document.getElementById('deptoPresup').value = '';
+    document.getElementById('deptoModal').classList.add('active');
+    document.getElementById('deptoNombre').focus();
+}
+
+function editDepto(id, nombre, presup) {
+    document.getElementById('deptoModalTitle').textContent = 'Editar Departamento';
+    document.getElementById('deptoForm').action = `/departamentos/${id}/editar`;
+    document.getElementById('deptoId').value = id;
+    document.getElementById('deptoNombre').value = nombre;
+    document.getElementById('deptoPresup').value = presup;
+    document.getElementById('deptoModal').classList.add('active');
+    document.getElementById('deptoNombre').focus();
+}
+
+function confirmDelete(url, name) {
+    document.getElementById('deleteItemName').textContent = name;
+    document.getElementById('deleteForm').action = url;
+    document.getElementById('deleteModal').classList.add('active');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Count-up
+    document.querySelectorAll('.count-up').forEach(el => {
+        const target = parseInt(el.dataset.target) || 0;
+        if (!target) { el.textContent = '0'; return; }
+        let cur = 0; const step = Math.ceil(target / 50);
+        const t = setInterval(() => { cur += step; if (cur >= target) { cur = target; clearInterval(t); } el.textContent = cur.toLocaleString('es-CO'); }, 16);
+    });
+    // Filter
+    const tf = document.getElementById('tableFilter');
+    if (tf) tf.addEventListener('input', () => {
+        const q = tf.value.toLowerCase();
+        let vis = 0;
+        document.querySelectorAll('#mainTable tbody tr').forEach(r => {
+            const show = r.textContent.toLowerCase().includes(q);
+            r.style.display = show ? '' : 'none';
+            if (show) vis++;
+        });
+        const info = document.getElementById('tableInfo');
+        if (info) info.textContent = `${vis} registros`;
+    });
+});
+</script>
+{% endblock %}

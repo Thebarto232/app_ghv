@@ -1,0 +1,305 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo; <span>View Áreas</span>
+</div>
+
+<!-- Summary cards -->
+<div class="area-summary">
+    <div class="area-summary-card">
+        <span class="material-symbols-outlined" style="color:#1565c0">domain</span>
+        <div>
+            <div class="area-summary-value">{{ grouped|length }}</div>
+            <div class="area-summary-label">Departamentos</div>
+        </div>
+    </div>
+    <div class="area-summary-card">
+        <span class="material-symbols-outlined" style="color:#6a1b9a">grid_view</span>
+        <div>
+            <div class="area-summary-value">{{ total }}</div>
+            <div class="area-summary-label">Áreas</div>
+        </div>
+    </div>
+    <div class="area-summary-card">
+        <span class="material-symbols-outlined" style="color:#2e7d32">assignment_ind</span>
+        <div>
+            <div class="area-summary-value">{{ total_pres }}</div>
+            <div class="area-summary-label">Presupuestados</div>
+        </div>
+    </div>
+    <div class="area-summary-card">
+        <span class="material-symbols-outlined" style="color:#e65100">groups</span>
+        <div>
+            <div class="area-summary-value">{{ total_ejec }}</div>
+            <div class="area-summary-label">Ejecutados</div>
+        </div>
+    </div>
+    <div class="area-summary-card">
+        <span class="material-symbols-outlined" style="color:#c62828">person_search</span>
+        <div>
+            <div class="area-summary-value">{{ total_pres - total_ejec }}</div>
+            <div class="area-summary-label">Pendientes Total</div>
+        </div>
+    </div>
+</div>
+
+<div class="area-toolbar">
+    <button class="area-toggle-all" id="toggleAll" title="Expandir / Colapsar todo">
+        <span class="material-symbols-outlined">unfold_less</span>
+        <span class="toggle-label">Colapsar todo</span>
+    </button>
+    {% if can_admin %}
+    <button class="btn btn-primary btn-sm" onclick="openAreaModal()">
+        <span class="material-symbols-outlined" style="font-size:18px">add</span> Agregar Área
+    </button>
+    {% endif %}
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table areas-grouped-table" id="areasTable">
+        <thead>
+            <tr>
+                <th style="min-width:220px">Area</th>
+                <th style="text-align:center;width:150px">Presupuestados</th>
+                <th style="text-align:center;width:140px">Ejecutados</th>
+                <th style="text-align:center;width:200px">Pendientes x Contratar</th>
+                <th style="width:40px"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for depto, data in grouped.items() %}
+            <tr class="depto-header-row" data-original-count="{{ data.areas|length }}" data-expanded="true">
+                <td colspan="5">
+                    <div class="depto-header">
+                        <span class="material-symbols-outlined depto-chevron">expand_more</span>
+                        <span class="material-symbols-outlined depto-icon">apartment</span>
+                        <span class="depto-name">{{ depto }}</span>
+                        <span class="depto-count">{{ data.areas|length }}</span>
+                        <span class="depto-stats">
+                            <span title="Presupuestados">P: {{ data.pres }}</span>
+                            <span title="Ejecutados">E: {{ data.ejec }}</span>
+                            <span title="Pendientes">
+                                {% set dp = data.pres - data.ejec %}
+                                {% if dp == 0 %}
+                                    <span style="color:#2e7d32">Pend: 0</span>
+                                {% elif dp > 0 %}
+                                    <span style="color:#e65100">Pend: {{ dp }}</span>
+                                {% else %}
+                                    <span style="color:#c62828">Pend: {{ dp }}</span>
+                                {% endif %}
+                            </span>
+                        </span>
+                    </div>
+                </td>
+            </tr>
+            {% for row in data.areas %}
+            <tr class="area-row" data-depto="{{ depto }}" data-area="{{ row.area }}">
+                <td class="area-name-cell">{{ row.area }}</td>
+                <td style="text-align:center">{{ row.presupuestados }}</td>
+                <td style="text-align:center">{{ row.ejecutados }}</td>
+                <td style="text-align:center">
+                    {% if row.presupuestados == '' or row.presupuestados == 0 %}
+                        {% if row.ejecutados > 0 %}
+                        <span class="status-badge status-over">
+                            <span class="material-symbols-outlined">cancel</span>
+                            {{ row.pendientes }}
+                        </span>
+                        {% else %}
+                        <span class="status-badge status-ok">
+                            <span class="material-symbols-outlined">check_circle</span>
+                            0
+                        </span>
+                        {% endif %}
+                    {% elif row.pendientes == 0 %}
+                        <span class="status-badge status-ok">
+                            <span class="material-symbols-outlined">check_circle</span>
+                            0
+                        </span>
+                    {% elif row.pendientes > 0 %}
+                        <span class="status-badge status-warn">
+                            <span class="material-symbols-outlined">error</span>
+                            {{ row.pendientes }}
+                        </span>
+                    {% else %}
+                        <span class="status-badge status-over">
+                            <span class="material-symbols-outlined">cancel</span>
+                            {{ row.pendientes }}
+                        </span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div style="display:flex;gap:2px;align-items:center">
+                        {% if can_admin %}
+                        <button class="btn-icon" title="Editar área" onclick="editArea({{ row.id }}, '{{ row.area }}', '{{ row.presupuestados }}', {{ grouped[depto]['id'] if 'id' in grouped[depto] else 0 }})">
+                            <span class="material-symbols-outlined" style="font-size:15px">edit</span>
+                        </button>
+                        <button class="btn-icon" title="Eliminar área" style="color:#ef4444" onclick="confirmDeleteArea('{{ url_for('area_eliminar', id=row.id) }}', '{{ row.area }}')">
+                            <span class="material-symbols-outlined" style="font-size:15px">delete</span>
+                        </button>
+                        {% endif %}
+                        <a href="{{ url_for('area_detail', area_id=row.id) }}" class="btn-icon" title="Ver detalle">
+                            <span class="material-symbols-outlined">chevron_right</span>
+                        </a>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% if can_admin %}
+<!-- Modal Crear/Editar Área -->
+<div class="modal-overlay" id="areaModal">
+    <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+            <h2 id="areaModalTitle">Agregar Área</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <form id="areaForm" method="POST" action="{{ url_for('area_nueva') }}">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Nombre del Área<span class="required">*</span></label>
+                    <input type="text" name="nombre" id="areaNombre" class="form-input" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Departamento<span class="required">*</span></label>
+                    <select name="departamento_id" id="areaDepto" class="form-input" required>
+                        <option value="">— Seleccionar —</option>
+                        {% for depto_name, data in grouped.items() %}
+                        <option value="{{ data.depto_id }}">{{ depto_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Presupuestados</label>
+                    <input type="number" name="presupuestados" id="areaPresup" class="form-input" min="0">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary"><span class="material-symbols-outlined" style="font-size:18px">save</span> Guardar</button>
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+<!-- Modal Confirmar Eliminar Área -->
+<div class="modal-overlay" id="deleteAreaModal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <h2>Confirmar Eliminación</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:20px">¿Eliminar área <strong id="deleteAreaName"></strong>?</p>
+        <div class="form-actions" style="border-top:1px solid var(--border);padding-top:16px">
+            <form id="deleteAreaForm" method="POST">
+                <button type="submit" class="btn btn-danger"><span class="material-symbols-outlined" style="font-size:18px">delete</span> Eliminar</button>
+            </form>
+            <button class="btn btn-outline" data-close-modal>Cancelar</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openAreaModal() {
+    document.getElementById('areaModalTitle').textContent = 'Agregar Área';
+    document.getElementById('areaForm').action = '{{ url_for("area_nueva") }}';
+    document.getElementById('areaNombre').value = '';
+    document.getElementById('areaPresup').value = '';
+    document.getElementById('areaModal').classList.add('active');
+    document.getElementById('areaNombre').focus();
+}
+function editArea(id, nombre, presup, deptoId) {
+    document.getElementById('areaModalTitle').textContent = 'Editar Área';
+    document.getElementById('areaForm').action = `/areas/${id}/editar`;
+    document.getElementById('areaNombre').value = nombre;
+    document.getElementById('areaPresup').value = presup;
+    const sel = document.getElementById('areaDepto');
+    if (sel && deptoId) sel.value = deptoId;
+    document.getElementById('areaModal').classList.add('active');
+    document.getElementById('areaNombre').focus();
+}
+function confirmDeleteArea(url, name) {
+    document.getElementById('deleteAreaName').textContent = name;
+    document.getElementById('deleteAreaForm').action = url;
+    document.getElementById('deleteAreaModal').classList.add('active');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const table = document.getElementById('areasTable');
+    if (!table) return;
+
+    /* ── Collapse / Expand department groups ────────────── */
+    function toggleDepto(deptoRow, forceState) {
+        const expanded = forceState !== undefined ? !forceState : deptoRow.dataset.expanded === 'true';
+        const newState = !expanded;
+        deptoRow.dataset.expanded = newState;
+        const chevron = deptoRow.querySelector('.depto-chevron');
+        if (chevron) chevron.textContent = newState ? 'expand_more' : 'chevron_right';
+
+        let next = deptoRow.nextElementSibling;
+        while (next && next.classList.contains('area-row')) {
+            next.style.display = newState ? '' : 'none';
+            next = next.nextElementSibling;
+        }
+    }
+
+    table.querySelectorAll('.depto-header-row').forEach(row => {
+        row.style.cursor = 'pointer';
+        row.addEventListener('click', () => toggleDepto(row));
+    });
+
+    /* ── Toggle All button ─────────────────────────────── */
+    const toggleBtn = document.getElementById('toggleAll');
+    let allExpanded = true;
+    if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+            allExpanded = !allExpanded;
+            const icon = toggleBtn.querySelector('.material-symbols-outlined');
+            const label = toggleBtn.querySelector('.toggle-label');
+            icon.textContent = allExpanded ? 'unfold_less' : 'unfold_more';
+            label.textContent = allExpanded ? 'Colapsar todo' : 'Expandir todo';
+            table.querySelectorAll('.depto-header-row').forEach(row => {
+                toggleDepto(row, allExpanded);
+            });
+        });
+    }
+
+    /* ── Global search filter ──────────────────────────── */
+    const globalSearch = document.getElementById('globalSearch');
+    if (globalSearch) {
+        globalSearch.addEventListener('input', () => {
+            const q = globalSearch.value.toLowerCase().trim();
+            const deptoRows = table.querySelectorAll('.depto-header-row');
+
+            deptoRows.forEach(deptoRow => {
+                const depto = deptoRow.querySelector('.depto-name').textContent.toLowerCase();
+                const origCount = deptoRow.dataset.originalCount;
+                let next = deptoRow.nextElementSibling;
+                let visibleCount = 0;
+
+                while (next && next.classList.contains('area-row')) {
+                    const area = next.dataset.area.toLowerCase();
+                    const match = !q || area.includes(q) || depto.includes(q);
+                    next.style.display = match ? '' : 'none';
+                    if (match) visibleCount++;
+                    next = next.nextElementSibling;
+                }
+
+                deptoRow.style.display = visibleCount > 0 ? '' : 'none';
+                deptoRow.dataset.expanded = visibleCount > 0 ? 'true' : 'false';
+                const chevron = deptoRow.querySelector('.depto-chevron');
+                if (chevron) chevron.textContent = visibleCount > 0 ? 'expand_more' : 'chevron_right';
+                const countBadge = deptoRow.querySelector('.depto-count');
+                if (countBadge) countBadge.textContent = q ? visibleCount : origCount;
+            });
+        });
+    }
+});
+</script>
+{% endblock %}

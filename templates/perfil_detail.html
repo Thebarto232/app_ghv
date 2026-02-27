@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo;
+    <a href="{{ url_for('areas') }}">View Áreas</a> &rsaquo;
+    <a href="{{ url_for('area_detail', area_id=area_id) }}">{{ perfil.area }}</a> &rsaquo;
+    <span>{{ perfil.perfil_ocupacional }}</span>
+</div>
+
+<div class="detail-card" style="margin-bottom:24px">
+    <div class="detail-grid" style="grid-template-columns: repeat(auto-fill, minmax(240px, 1fr))">
+        <div class="detail-field">
+            <label>Perfil Ocupacional</label>
+            <span>{{ perfil.perfil_ocupacional }}</span>
+        </div>
+        <div class="detail-field">
+            <label>Departamento</label>
+            <span>{{ perfil.departamento }}</span>
+        </div>
+        <div class="detail-field">
+            <label>Area</label>
+            <span>{{ perfil.area }}</span>
+        </div>
+        <div class="detail-field">
+            <label>ID_Perfil_Ocupacional</label>
+            <span>{{ perfil.id_perfil }}</span>
+        </div>
+    </div>
+</div>
+
+<!-- Related DBases -->
+<div class="related-section">
+    <h3 class="related-title">Related DBases <span class="related-count">{{ empleados|length }}</span></h3>
+    <div class="table-wrapper">
+        {% if empleados|length > 0 %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Apellidos y Nombres</th>
+                    <th>Numero de Cedula</th>
+                    <th>Lugar Expedición</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for e in empleados %}
+                <tr>
+                    <td>{{ e.apellidos_nombre }}</td>
+                    <td>{{ e.id_cedula }}</td>
+                    <td>{{ e.lugar_expedicion or '—' }}</td>
+                    <td>
+                        <a href="{{ url_for('area_empleado_detail', area_id=area_id, cedula=e.id_cedula) }}" class="btn-icon">
+                            <span class="material-symbols-outlined">chevron_right</span>
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state" style="padding:20px"><p>Sin empleados activos</p></div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Related Retirados -->
+<div class="related-section">
+    <h3 class="related-title">Related Retirados <span class="related-count">{{ retirados|length }}</span></h3>
+    <div class="table-wrapper">
+        {% if retirados|length > 0 %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>ID_Cedula</th>
+                    <th>ID_Retiro</th>
+                    <th>Apellidos y Nombres</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in retirados %}
+                <tr>
+                    <td>{{ r.id_cedula }}</td>
+                    <td>{{ r.id_retiro }}</td>
+                    <td>{{ r.apellidos_nombre }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-state" style="padding:20px"><p>Sin retirados</p></div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

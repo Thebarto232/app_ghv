@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    <a href="{{ back_url }}" class="btn btn-outline btn-sm">
+        <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span> Volver
+    </a>
+    {% if can_write %}
+    <a href="{{ url_for('editar_empleado', id=data.id_cedula) }}" class="btn btn-primary btn-sm">
+        <span class="material-symbols-outlined" style="font-size:18px">edit</span> Editar
+    </a>
+    {% if data.estado == 'ACTIVO' %}
+    <a href="{{ url_for('retirar_empleado', id=data.id_cedula) }}" class="btn btn-outline btn-sm" style="border-color:#f97316;color:#f97316">
+        <span class="material-symbols-outlined" style="font-size:18px">person_remove</span> Retirar
+    </a>
+    {% else %}
+    <form method="POST" action="{{ url_for('reactivar_empleado', id=data.id_cedula) }}" style="display:inline">
+        <button type="submit" class="btn btn-outline btn-sm" style="border-color:#22c55e;color:#22c55e">
+            <span class="material-symbols-outlined" style="font-size:18px">person_check</span> Reactivar
+        </button>
+    </form>
+    {% endif %}
+    <button class="btn btn-outline btn-sm" style="border-color:#ef4444;color:#ef4444" onclick="confirmDelete('{{ url_for('eliminar_empleado', id=data.id_cedula) }}', '{{ data.apellidos_nombre }}')">
+        <span class="material-symbols-outlined" style="font-size:18px">delete</span> Eliminar
+    </button>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="detail-card">
+    <div class="detail-grid">
+        {% for field in fields %}
+        <div class="detail-field">
+            <label>{{ field.label }}</label>
+            <span>
+                {% set val = data[field.key] if field.key in data else '' %}
+                {% if val is none or val == '' %}
+                    —
+                {% elif field.type|default('') == 'badge' %}
+                    {% if val == 'ACTIVO' or val == true %}
+                        <span class="badge badge-active">ACTIVO</span>
+                    {% else %}
+                        <span class="badge badge-inactive">{{ val }}</span>
+                    {% endif %}
+                {% else %}
+                    {{ val }}
+                {% endif %}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+{% if children is defined %}
+<div style="display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px">
+    <h2 style="font-size:16px;font-weight:600">Hijos registrados <span class="related-count">{{ children|length }}</span></h2>
+    {% if can_write %}
+    <button class="btn btn-primary btn-sm" onclick="openHijoModal()">
+        <span class="material-symbols-outlined" style="font-size:18px">add</span> Agregar Hijo
+    </button>
+    {% endif %}
+</div>
+<div class="table-wrapper">
+    {% if children|length > 0 %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Nombre</th>
+                <th>Identificación</th>
+                <th>Fecha Nacimiento</th>
+                <th>Sexo</th>
+                <th>Estado</th>
+                {% if can_write %}<th style="width:80px"></th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for h in children %}
+            <tr>
+                <td>{{ h.apellidos_nombre }}</td>
+                <td>{{ h.identificacion_hijo or '—' }}</td>
+                <td>{{ h.fecha_nacimiento or '—' }}</td>
+                <td>{{ h.sexo or '—' }}</td>
+                <td>
+                    {% if h.estado == 'ACTIVO' %}
+                        <span class="badge badge-active">ACTIVO</span>
+                    {% else %}
+                        <span class="badge badge-inactive">{{ h.estado }}</span>
+                    {% endif %}
+                </td>
+                {% if can_write %}
+                <td>
+                    <div style="display:flex;gap:4px">
+                        <button class="btn-icon" title="Editar" onclick="editHijo('{{ h.id_hijo }}','{{ h.identificacion_hijo or '' }}','{{ h.apellidos_nombre }}','{{ h.fecha_nacimiento or '' }}','{{ h.sexo or '' }}','{{ h.estado or 'ACTIVO' }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+                        </button>
+                        <button class="btn-icon" title="Eliminar" style="color:#ef4444" onclick="confirmDelete('{{ url_for('eliminar_hijo', id=h.id_hijo, redirect_cedula=data.id_cedula) }}', '{{ h.apellidos_nombre }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+                        </button>
+                    </div>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state" style="padding:30px">
+        <p>No tiene hijos registrados</p>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if retirados is defined and retirados|length > 0 %}
+<div style="margin:20px 0 12px">
+    <h2 style="font-size:16px;font-weight:600">Registros de Retiro <span class="related-count">{{ retirados|length }}</span></h2>
+</div>
+<div class="table-wrapper">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Fecha Retiro</th>
+                <th>Tipo Retiro</th>
+                <th>Días Laborados</th>
+                <th>Motivo</th>
+                {% if can_write %}<th style="width:80px"></th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in retirados %}
+            <tr>
+                <td>{{ r.fecha_retiro or '—' }}</td>
+                <td>{{ r.tipo_retiro or '—' }}</td>
+                <td>{{ r.dias_laborados or '—' }}</td>
+                <td>{{ r.motivo or '—' }}</td>
+                {% if can_write %}
+                <td>
+                    <div style="display:flex;gap:4px">
+                        <a href="{{ url_for('editar_retirado', id=r.id_retiro, redirect_cedula=data.id_cedula) }}" class="btn-icon" title="Editar retiro">
+                            <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+                        </a>
+                        <button class="btn-icon" title="Eliminar" style="color:#ef4444" onclick="confirmDelete('{{ url_for('eliminar_retirado', id=r.id_retiro, redirect_cedula=data.id_cedula) }}', 'registro de retiro')">
+                            <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+                        </button>
+                    </div>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Modal Agregar/Editar Hijo -->
+{% if can_write %}
+<div class="modal-overlay" id="hijoModal">
+    <div class="modal" style="max-width:550px">
+        <div class="modal-header">
+            <h2 id="hijoModalTitle">Agregar Hijo</h2>
+            <button class="btn-icon" data-close-modal>
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <form id="hijoForm" method="POST" action="{{ url_for('crear_hijo') }}">
+            <input type="hidden" name="id_cedula" value="{{ data.id_cedula }}">
+            <input type="hidden" name="id_hijo" id="hijoId" value="">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Nombre Completo<span class="required">*</span></label>
+                    <input type="text" name="apellidos_nombre" id="hijoNombre" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Identificación</label>
+                    <input type="text" name="identificacion_hijo" id="hijoIdentificacion" class="form-input">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Fecha Nacimiento</label>
+                    <input type="text" name="fecha_nacimiento" id="hijoFecha" class="form-input" placeholder="DD/MM/AAAA">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Sexo</label>
+                    <select name="sexo" id="hijoSexo" class="form-input">
+                        <option value="">— Seleccionar —</option>
+                        <option value="M">M</option>
+                        <option value="F">F</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Estado</label>
+                    <select name="estado" id="hijoEstado" class="form-input">
+                        <option value="ACTIVO">ACTIVO</option>
+                        <option value="INACTIVO">INACTIVO</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <span class="material-symbols-outlined" style="font-size:18px">save</span> Guardar
+                </button>
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<!-- Modal Confirmar Eliminar -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <h2>Confirmar Eliminación</h2>
+            <button class="btn-icon" data-close-modal>
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <div style="padding:0 0 20px">
+            <p style="color:var(--text-secondary);font-size:14px">¿Está seguro que desea eliminar <strong id="deleteItemName"></strong>? Esta acción no se puede deshacer.</p>
+        </div>
+        <div class="form-actions" style="border-top:1px solid var(--border);padding-top:16px">
+            <form id="deleteForm" method="POST">
+                <button type="submit" class="btn btn-danger">
+                    <span class="material-symbols-outlined" style="font-size:18px">delete</span> Eliminar
+                </button>
+            </form>
+            <button class="btn btn-outline" data-close-modal>Cancelar</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openHijoModal() {
+    document.getElementById('hijoModalTitle').textContent = 'Agregar Hijo';
+    document.getElementById('hijoForm').action = '{{ url_for("crear_hijo") }}';
+    document.getElementById('hijoId').value = '';
+    document.getElementById('hijoNombre').value = '';
+    document.getElementById('hijoIdentificacion').value = '';
+    document.getElementById('hijoFecha').value = '';
+    document.getElementById('hijoSexo').value = '';
+    document.getElementById('hijoEstado').value = 'ACTIVO';
+    document.getElementById('hijoModal').classList.add('active');
+}
+
+function editHijo(id, ident, nombre, fecha, sexo, estado) {
+    document.getElementById('hijoModalTitle').textContent = 'Editar Hijo';
+    document.getElementById('hijoForm').action = '/hijo/' + id + '/editar';
+    document.getElementById('hijoId').value = id;
+    document.getElementById('hijoNombre').value = nombre;
+    document.getElementById('hijoIdentificacion').value = ident;
+    document.getElementById('hijoFecha').value = fecha;
+    document.getElementById('hijoSexo').value = sexo;
+    document.getElementById('hijoEstado').value = estado;
+    document.getElementById('hijoModal').classList.add('active');
+}
+
+function confirmDelete(url, name) {
+    document.getElementById('deleteItemName').textContent = name;
+    document.getElementById('deleteForm').action = url;
+    document.getElementById('deleteModal').classList.add('active');
+}
+</script>
+{% endblock %}

@@ -1,0 +1,315 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+<div style="display:flex;align-items:center;gap:8px">
+    {% if export_key is defined and export_key %}
+    <a href="{{ url_for('generic_export', page_key=export_key) }}" class="btn btn-outline btn-sm" title="Exportar a Excel" onclick="return confirmGenericExport(event, this.href)">
+        <span class="material-symbols-outlined" style="font-size:18px;color:var(--colbeef-green)">download</span>
+        Exportar
+    </a>
+    {% endif %}
+    {% if show_add_btn|default(false) %}
+    <a href="{{ add_url|default('#') }}" class="btn btn-primary btn-sm">
+        <span class="material-symbols-outlined" style="font-size:18px">add</span> Agregar
+    </a>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+{% if stats|default(none) %}
+<div class="stats-grid animate-in">
+    {% for stat in stats %}
+    <div class="stat-card" style="animation-delay:{{ loop.index0 * 80 }}ms">
+        <div class="stat-icon {{ stat.color }}">
+            <span class="material-symbols-outlined">{{ stat.icon }}</span>
+        </div>
+        <div class="stat-info">
+            <h3 class="count-up" data-target="{{ stat.value }}">0</h3>
+            <p>{{ stat.label }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="table-toolbar">
+    <div class="toolbar-left">
+        <div class="search-filter">
+            <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-secondary)">search</span>
+            <input type="text" id="tableFilter" placeholder="Buscar en {{ rows|length }} registros..." autocomplete="off">
+        </div>
+        {% if filter_columns is defined and filter_columns %}
+        <div class="column-filter">
+            <select id="columnFilter">
+                <option value="">Todas las columnas</option>
+                {% for fc in filter_columns %}
+                <option value="{{ fc.index }}">{{ fc.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+    </div>
+    <div class="toolbar-right">
+        <span class="table-info" id="tableInfo">{{ rows|length }} registros</span>
+        <div class="page-size-select">
+            <select id="pageSizeSelect">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="0">Todos</option>
+            </select>
+        </div>
+    </div>
+</div>
+
+<div class="table-wrapper">
+    {% if rows|length > 0 %}
+    <table class="data-table paginated-table" id="mainDataTable">
+        <thead>
+            <tr>
+                {% for col in columns %}
+                <th data-sort data-col-idx="{{ loop.index0 }}">{{ col.label }}<span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                {% endfor %}
+                {% if detail_route is defined and detail_route %}
+                <th style="width:50px"></th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                {% for col in columns %}
+                <td>
+                    {% set val = row[col.key] %}
+                    {% if val is none %}
+                        <span class="text-muted">—</span>
+                    {% elif col.type|default('') == 'badge' %}
+                        {% if val == 'ACTIVO' or val == true %}
+                            <span class="badge badge-active">ACTIVO</span>
+                        {% else %}
+                            <span class="badge badge-inactive">{{ val }}</span>
+                        {% endif %}
+                    {% elif col.type|default('') == 'dept' %}
+                        <span class="badge-dept">{{ val }}</span>
+                    {% elif col.type|default('') == 'sex' %}
+                        {% if val == 'M' %}
+                        <span class="badge-sex male"><span class="material-symbols-outlined" style="font-size:14px">male</span> M</span>
+                        {% elif val == 'F' %}
+                        <span class="badge-sex female"><span class="material-symbols-outlined" style="font-size:14px">female</span> F</span>
+                        {% else %}
+                        {{ val }}
+                        {% endif %}
+                    {% elif col.type|default('') == 'number' %}
+                        <span class="text-number">{{ "{:,}".format(val|int) if val else '—' }}</span>
+                    {% elif col.type|default('') == 'retiro' %}
+                        {% if val and 'PENDIENTE' in val|upper %}
+                        <span class="badge badge-warning">{{ val }}</span>
+                        {% elif val and 'RENUNCIA' in val|upper %}
+                        <span class="badge badge-orange">{{ val }}</span>
+                        {% elif val and 'TERMINACION' in val|upper %}
+                        <span class="badge badge-inactive">{{ val }}</span>
+                        {% elif val and 'FINALIZACION' in val|upper %}
+                        <span class="badge badge-info">{{ val }}</span>
+                        {% elif val and 'FALLECIMIENTO' in val|upper %}
+                        <span class="badge badge-dark">{{ val }}</span>
+                        {% else %}
+                        {{ val or '—' }}
+                        {% endif %}
+                    {% else %}
+                        {{ val }}
+                    {% endif %}
+                </td>
+                {% endfor %}
+                {% if detail_route is defined and detail_route %}
+                <td>
+                    <a href="{{ url_for(detail_route, id=row[pk]) }}" class="btn-icon" title="Ver detalle">
+                        <span class="material-symbols-outlined">chevron_right</span>
+                    </a>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="pagination-bar" id="paginationBar">
+        <div class="pagination-info">
+            Mostrando <strong id="pageStart">1</strong>-<strong id="pageEnd">50</strong> de <strong id="pageTotal">{{ rows|length }}</strong>
+        </div>
+        <div class="pagination-controls">
+            <button class="btn-page" id="btnFirst" title="Primera"><span class="material-symbols-outlined">first_page</span></button>
+            <button class="btn-page" id="btnPrev" title="Anterior"><span class="material-symbols-outlined">chevron_left</span></button>
+            <span class="page-indicator" id="pageIndicator">1 / 1</span>
+            <button class="btn-page" id="btnNext" title="Siguiente"><span class="material-symbols-outlined">chevron_right</span></button>
+            <button class="btn-page" id="btnLast" title="Última"><span class="material-symbols-outlined">last_page</span></button>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <span class="material-symbols-outlined">inbox</span>
+        <p>No se encontraron registros</p>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Modal Exportar -->
+<div class="modal-overlay" id="genericExportModal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <h2 style="display:flex;align-items:center;gap:8px">
+                <span class="material-symbols-outlined" style="font-size:22px;color:var(--primary)">download</span>
+                Exportar a Excel
+            </h2>
+            <button class="btn-icon" onclick="document.getElementById('genericExportModal').classList.remove('active')">
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <div style="padding:4px 0 20px;color:var(--text-secondary);font-size:14px;display:flex;align-items:center;gap:10px">
+            <span class="material-symbols-outlined" style="font-size:36px;color:#22c55e;flex-shrink:0">table_chart</span>
+            <span>Se generará un archivo <strong>.xlsx</strong> con todos los registros actualmente visibles en la tabla.</span>
+        </div>
+        <div class="form-actions" style="border-top:1px solid var(--border);padding-top:16px">
+            <a href="#" class="btn btn-primary" id="genericExportLink" onclick="document.getElementById('genericExportModal').classList.remove('active')">
+                <span class="material-symbols-outlined" style="font-size:18px">download</span> Exportar
+            </a>
+            <button class="btn btn-outline" onclick="document.getElementById('genericExportModal').classList.remove('active')">Cancelar</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function confirmGenericExport(e, url) {
+    e.preventDefault();
+    document.getElementById('genericExportLink').href = url;
+    document.getElementById('genericExportModal').classList.add('active');
+    return false;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Count-up animation
+    document.querySelectorAll('.count-up').forEach(el => {
+        const target = parseInt(el.dataset.target) || 0;
+        if (target === 0) { el.textContent = '0'; return; }
+        const duration = 800;
+        const step = Math.ceil(target / (duration / 16));
+        let current = 0;
+        const timer = setInterval(() => {
+            current += step;
+            if (current >= target) { current = target; clearInterval(timer); }
+            el.textContent = current.toLocaleString('es-CO');
+        }, 16);
+    });
+
+    // Pagination
+    const table = document.getElementById('mainDataTable');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    const allRows = Array.from(tbody.querySelectorAll('tr'));
+    const pageSizeSelect = document.getElementById('pageSizeSelect');
+    const pageStart = document.getElementById('pageStart');
+    const pageEnd = document.getElementById('pageEnd');
+    const pageTotal = document.getElementById('pageTotal');
+    const pageIndicator = document.getElementById('pageIndicator');
+    const paginationBar = document.getElementById('paginationBar');
+    let currentPage = 1;
+    let pageSize = parseInt(pageSizeSelect?.value) || 50;
+    let visibleRows = allRows;
+
+    function renderPage() {
+        const total = visibleRows.length;
+        if (pageSize === 0 || total === 0) {
+            allRows.forEach(r => r.classList.remove('page-hidden'));
+            visibleRows.forEach((r, i) => { r.classList.remove('page-hidden'); r.style.animationDelay = `${Math.min(i, 20) * 20}ms`; });
+            if (paginationBar) paginationBar.style.display = total === 0 ? 'none' : 'flex';
+            if (pageStart) pageStart.textContent = total > 0 ? '1' : '0';
+            if (pageEnd) pageEnd.textContent = total;
+            if (pageTotal) pageTotal.textContent = total;
+            if (pageIndicator) pageIndicator.textContent = '1 / 1';
+            return;
+        }
+        const totalPages = Math.ceil(total / pageSize);
+        if (currentPage > totalPages) currentPage = totalPages || 1;
+        const start = (currentPage - 1) * pageSize;
+        const end = Math.min(start + pageSize, total);
+
+        allRows.forEach(r => r.classList.add('page-hidden'));
+        visibleRows.forEach((r, i) => {
+            if (i >= start && i < end) {
+                r.classList.remove('page-hidden');
+                r.style.animationDelay = `${(i - start) * 15}ms`;
+            }
+        });
+
+        if (pageStart) pageStart.textContent = total > 0 ? start + 1 : 0;
+        if (pageEnd) pageEnd.textContent = end;
+        if (pageTotal) pageTotal.textContent = total;
+        if (pageIndicator) pageIndicator.textContent = `${currentPage} / ${totalPages}`;
+        if (paginationBar) paginationBar.style.display = 'flex';
+
+        document.getElementById('btnFirst').disabled = currentPage <= 1;
+        document.getElementById('btnPrev').disabled = currentPage <= 1;
+        document.getElementById('btnNext').disabled = currentPage >= totalPages;
+        document.getElementById('btnLast').disabled = currentPage >= totalPages;
+    }
+
+    document.getElementById('btnFirst')?.addEventListener('click', () => { currentPage = 1; renderPage(); });
+    document.getElementById('btnPrev')?.addEventListener('click', () => { currentPage--; renderPage(); });
+    document.getElementById('btnNext')?.addEventListener('click', () => { currentPage++; renderPage(); });
+    document.getElementById('btnLast')?.addEventListener('click', () => { currentPage = Math.ceil(visibleRows.length / pageSize); renderPage(); });
+    pageSizeSelect?.addEventListener('change', () => { pageSize = parseInt(pageSizeSelect.value) || 0; currentPage = 1; renderPage(); });
+
+    // Filter integration with pagination
+    const tableFilter = document.getElementById('tableFilter');
+    const columnFilter = document.getElementById('columnFilter');
+    const tableInfo = document.getElementById('tableInfo');
+
+    function applyFilter() {
+        const term = (tableFilter?.value || '').toLowerCase();
+        const colIdx = columnFilter ? parseInt(columnFilter.value) : -1;
+        visibleRows = allRows.filter(row => {
+            if (!term) return true;
+            if (colIdx >= 0) {
+                const cell = row.children[colIdx];
+                return cell && cell.textContent.toLowerCase().includes(term);
+            }
+            return row.textContent.toLowerCase().includes(term);
+        });
+        allRows.forEach(r => { r.classList.add('page-hidden'); r.style.display = ''; });
+        visibleRows.forEach(r => r.style.display = '');
+        allRows.filter(r => !visibleRows.includes(r)).forEach(r => r.style.display = 'none');
+        currentPage = 1;
+        if (tableInfo) tableInfo.textContent = `${visibleRows.length} registros`;
+        renderPage();
+    }
+
+    tableFilter?.addEventListener('input', applyFilter);
+    columnFilter?.addEventListener('change', applyFilter);
+
+    // Global search integration
+    const globalSearch = document.getElementById('globalSearch');
+    if (globalSearch && tableFilter) {
+        globalSearch.addEventListener('input', () => {
+            tableFilter.value = globalSearch.value;
+            applyFilter();
+        });
+    }
+
+    // Stagger animation on first load
+    renderPage();
+
+    // Export modal close on overlay click / Escape
+    const exportModal = document.getElementById('genericExportModal');
+    if (exportModal) {
+        exportModal.addEventListener('click', (e) => {
+            if (e.target === exportModal) exportModal.classList.remove('active');
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') exportModal.classList.remove('active');
+        });
+    }
+});
+</script>
+{% endblock %}

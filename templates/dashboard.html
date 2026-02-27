@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo;
+    <span>Dashboard</span>
+</div>
+
+<div class="dashboard-grid">
+    {% for key, chart in charts_data.items() %}
+    <div class="dash-card" data-key="{{ key }}">
+        <div class="dash-card-header">
+            <span class="dash-card-title">{{ chart.title }}</span>
+            <div class="dash-card-actions">
+                <a href="{{ url_for('dashboard_export', chart_key=key) }}" class="btn btn-primary btn-sm" onclick="return confirmDashExport(event, this.href)">Exportar</a>
+                <a href="{{ url_for('dashboard_chart', chart_key=key) }}" class="btn-icon" title="Expandir">
+                    <span class="material-symbols-outlined" style="font-size:18px">open_in_full</span>
+                </a>
+            </div>
+        </div>
+        <div class="dash-card-subtitle">{{ chart.subtitle }}</div>
+        <div class="dash-legend" id="legend-{{ key }}"></div>
+        <div class="dash-chart-wrap">
+            <canvas id="chart-{{ key }}"></canvas>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div id="dashExportModal" class="export-modal-overlay" style="display:none">
+    <div class="modal-box">
+        <h3>Confirm</h3>
+        <p>¿Desea Exportar la Información?</p>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeDashExport()">No</button>
+            <a href="#" class="btn btn-primary" id="dashExportLink">Exportar</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+const CHART_COLORS = [
+    '#4285F4','#EA4335','#FBBC04','#34A853','#FF6D01','#46BDC6',
+    '#7B61FF','#E91E63','#00BCD4','#8BC34A','#FF5722','#9C27B0',
+    '#009688','#CDDC39','#795548','#607D8B','#3F51B5','#FFC107',
+];
+
+const chartsData = {{ charts_data | tojson }};
+
+Object.entries(chartsData).forEach(([key, data]) => {
+    const ctx = document.getElementById('chart-' + key);
+    const total = data.values.reduce((a, b) => a + b, 0);
+    const colors = data.labels.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]);
+
+    new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: data.labels,
+            datasets: [{
+                data: data.values,
+                backgroundColor: colors,
+                borderWidth: 2,
+                borderColor: '#fff',
+                hoverBorderWidth: 0,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '55%',
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: (ctx) => {
+                            const pct = ((ctx.parsed / total) * 100).toFixed(0);
+                            return ` ${ctx.label}: ${ctx.parsed} (${pct}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    const legendEl = document.getElementById('legend-' + key);
+    const maxShow = 4;
+    const items = data.labels.map((label, i) => {
+        return `<span class="legend-item"><span class="legend-dot" style="background:${colors[i]}"></span>${label}</span>`;
+    });
+    let html = items.slice(0, maxShow).join('');
+    if (items.length > maxShow) {
+        const page = Math.ceil(items.length / maxShow);
+        html += `<span class="legend-more">1/${page} ▸</span>`;
+    }
+    legendEl.innerHTML = html;
+});
+
+let pendingExportUrl = '';
+function confirmDashExport(e, url) {
+    e.preventDefault();
+    pendingExportUrl = url;
+    document.getElementById('dashExportLink').href = url;
+    document.getElementById('dashExportModal').style.display = 'flex';
+    return false;
+}
+function closeDashExport() {
+    document.getElementById('dashExportModal').style.display = 'none';
+}
+document.getElementById('dashExportModal').addEventListener('click', function(e) {
+    if (e.target === this) closeDashExport();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeDashExport();
+});
+</script>
+{% endblock %}

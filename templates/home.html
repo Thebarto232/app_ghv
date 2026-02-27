@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="home-grid">
+    {% if vm.eventos %}
+    <a href="{{ url_for('cumpleanos') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #fff5f5, #ffe4e6)">
+            <span class="material-symbols-outlined" style="color:#e53935">cake</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot red"></span>
+            Cumpleaños
+        </div>
+    </a>
+    <a href="{{ url_for('aniversario') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #fff7ed, #ffedd5)">
+            <span class="material-symbols-outlined" style="color:#f97316">workspace_premium</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot orange"></span>
+            Aniversario Laboral
+        </div>
+    </a>
+    {% endif %}
+
+    {% if vm.organizacion %}
+    <a href="{{ url_for('areas') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #f0fdf4, #dcfce7)">
+            <span class="material-symbols-outlined" style="color:#22c55e">extension</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot green"></span>
+            Áreas de Trabajo
+        </div>
+    </a>
+    {% endif %}
+
+    {% if vm.eps %}
+    <a href="{{ url_for('view_eps') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #eff6ff, #dbeafe)">
+            <span class="material-symbols-outlined" style="color:#3b82f6">local_hospital</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot blue"></span>
+            EPS
+        </div>
+    </a>
+    {% endif %}
+
+    {% if vm.fondos %}
+    <a href="{{ url_for('view_fondos') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #faf5ff, #f3e8ff)">
+            <span class="material-symbols-outlined" style="color:#a855f7">savings</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot purple"></span>
+            Fondo de Pensiones
+        </div>
+    </a>
+    {% endif %}
+
+    {% if vm.dashboard %}
+    <a href="{{ url_for('view_total_personal') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #f0f9ff, #e0f2fe)">
+            <span class="material-symbols-outlined" style="color:#0ea5e9">monitoring</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot blue"></span>
+            Dashboard
+        </div>
+    </a>
+    {% endif %}
+
+    {% if vm.personal %}
+    <a href="{{ url_for('personal_activo') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #f0fdf4, #dcfce7)">
+            <span class="material-symbols-outlined" style="color:#16a34a">person_check</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot green"></span>
+            Personal Activo
+        </div>
+    </a>
+    {% endif %}
+
+    {% if vm.familia %}
+    <a href="{{ url_for('hijos_activos') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #fefce8, #fef9c3)">
+            <span class="material-symbols-outlined" style="color:#ca8a04">child_care</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot yellow"></span>
+            Hijos Activos
+        </div>
+    </a>
+    {% endif %}
+</div>
+{% endblock %}

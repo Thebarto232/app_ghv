@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+<a href="{{ back_url }}" class="btn btn-outline">
+    <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span> Volver
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="detail-card" style="max-width:800px">
+    <h3 class="form-section-title" style="color:#3b82f6"><span class="material-symbols-outlined">edit</span> Editar Registro de Retiro</h3>
+    <div class="detail-grid" style="margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+        <div class="detail-field"><label>ID Retiro</label><span>{{ ret.id_retiro }}</span></div>
+        <div class="detail-field"><label>Cédula</label><span>{{ ret.id_cedula }}</span></div>
+        <div class="detail-field"><label>Nombre</label><span>{{ ret.apellidos_nombre }}</span></div>
+        <div class="detail-field"><label>Departamento</label><span>{{ ret.departamento or '—' }}</span></div>
+        <div class="detail-field"><label>Área</label><span>{{ ret.area or '—' }}</span></div>
+        <div class="detail-field"><label>Fecha Ingreso</label><span>{{ ret.fecha_ingreso or '—' }}</span></div>
+    </div>
+
+    <form method="POST">
+        <input type="hidden" name="redirect_cedula" value="{{ redirect_cedula }}">
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Fecha de Retiro<span class="required">*</span></label>
+                <input type="date" name="fecha_retiro" id="fechaRetiro" class="form-input" required
+                       value="{{ ret.fecha_retiro | replace('/', '-') if ret.fecha_retiro else '' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Tipo de Retiro<span class="required">*</span></label>
+                <select name="tipo_retiro" class="form-input" required>
+                    <option value="">— Seleccionar —</option>
+                    {% for m in motivos %}
+                    <option value="{{ m.tipo_retiro }}" {{ 'selected' if ret.tipo_retiro == m.tipo_retiro }}>{{ m.tipo_retiro }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Días Laborados</label>
+                <input type="number" name="dias_laborados" id="diasLaborados" class="form-input"
+                       value="{{ ret.dias_laborados or '' }}">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group" style="grid-column:1/-1">
+                <label class="form-label">Motivo / Observaciones</label>
+                <textarea name="motivo" class="form-input" rows="3" style="resize:vertical">{{ ret.motivo or '' }}</textarea>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">
+                <span class="material-symbols-outlined" style="font-size:18px">save</span> Guardar Cambios
+            </button>
+            <a href="{{ back_url }}" class="btn btn-outline">Cancelar</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const fechaRetiro = document.getElementById('fechaRetiro');
+    const diasLaborados = document.getElementById('diasLaborados');
+    const fechaIngreso = '{{ ret.fecha_ingreso or "" }}';
+
+    function parseFecha(str) {
+        if (!str) return null;
+        const parts = str.split('/');
+        if (parts.length === 3) return new Date(parts[2], parts[1]-1, parts[0]);
+        const d = new Date(str);
+        return isNaN(d) ? null : d;
+    }
+
+    fechaRetiro.addEventListener('change', () => {
+        const fi = parseFecha(fechaIngreso);
+        const fr = new Date(fechaRetiro.value);
+        if (fi && fr && !isNaN(fr) && !diasLaborados.value) {
+            const diff = Math.round((fr - fi) / (1000 * 60 * 60 * 24));
+            diasLaborados.value = diff > 0 ? diff : 0;
+        }
+    });
+
+    // Convert stored DD/MM/YYYY to YYYY-MM-DD for date input
+    const rawFecha = '{{ ret.fecha_retiro or "" }}';
+    if (rawFecha && rawFecha.includes('/')) {
+        const p = rawFecha.split('/');
+        if (p.length === 3) fechaRetiro.value = `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
+    }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-container"
+     data-api="/api/aniversario"
+     data-fields='[
+        {"key":"apellidos_nombre","label":"Apellidos y Nombres"},
+        {"key":"id_cedula","label":"Numero de Cedula"},
+        {"key":"departamento","label":"Departamento"},
+        {"key":"area","label":"Area"},
+        {"key":"perfil_ocupacional","label":"Perfil Ocupacional"},
+        {"key":"sexo","label":"Sexo"},
+        {"key":"celular","label":"Celular"},
+        {"key":"correo","label":"Correo Electronico"},
+        {"key":"estado","label":"Estado"},
+        {"key":"mes_cumple","label":"Mes Cumple"},
+        {"key":"cumpleanos","label":"Cumpleaños"},
+        {"key":"aniversario_laboral","label":"Aniversario Laboral"},
+        {"key":"antiguedad","label":"Antigüedad (años)"},
+        {"key":"tipo_documento","label":"Tipo Documento"},
+        {"key":"nivel_educativo","label":"Nivel Educativo"}
+     ]'>
+    <!-- Breadcrumb -->
+    <div class="cal-breadcrumb">
+        <a href="{{ url_for('home') }}">Home</a> &rsaquo; <span>Date Cumpleaños Laboral</span>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="cal-toolbar">
+        <div class="cal-views">
+            <button class="cal-view-btn" data-view="day">Day</button>
+            <button class="cal-view-btn" data-view="week">Week</button>
+            <button class="cal-view-btn active" data-view="month">Month</button>
+        </div>
+        <div class="cal-nav">
+            <button class="cal-nav-btn" id="calPrev">
+                <span class="material-symbols-outlined">chevron_left</span>
+            </button>
+            <span class="cal-title" id="calTitle">febrero 2026</span>
+            <button class="cal-nav-btn" id="calNext">
+                <span class="material-symbols-outlined">chevron_right</span>
+            </button>
+        </div>
+        <button class="btn btn-outline btn-sm" id="calToday">Today</button>
+    </div>
+
+    <!-- Calendar body -->
+    <div class="cal-body" id="calBody"></div>
+</div>
+
+<!-- Detail Panel -->
+<div class="cal-detail-overlay" id="detailOverlay">
+    <div class="cal-detail-panel" id="detailPanel">
+        <div class="cal-detail-header">
+            <h3 id="detailName"></h3>
+            <div class="cal-detail-actions">
+                <button class="btn-icon" id="btnEdit" title="Editar">
+                    <span class="material-symbols-outlined">edit</span>
+                </button>
+                <button class="btn-icon" id="btnCloseDetail">
+                    <span class="material-symbols-outlined">close</span>
+                </button>
+            </div>
+        </div>
+        <div class="cal-detail-body" id="detailBody"></div>
+    </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal-overlay" id="editModal">
+    <div class="modal" style="max-width:700px">
+        <div class="modal-header">
+            <h2>Editar Empleado</h2>
+            <button class="btn-icon" data-close-modal>
+                <span class="material-symbols-outlined">close</span>
+            </button>
+        </div>
+        <form id="editForm">
+            <input type="hidden" id="editId">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Apellidos y Nombres</label>
+                    <input type="text" id="editNombre" name="apellidos_nombre">
+                </div>
+                <div class="form-group">
+                    <label>Número de Cédula</label>
+                    <input type="text" id="editCedula" disabled>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Departamento</label>
+                    <input type="text" id="editDepto" name="departamento">
+                </div>
+                <div class="form-group">
+                    <label>Área</label>
+                    <input type="text" id="editArea" name="area">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Sexo</label>
+                    <select id="editSexo" name="sexo">
+                        <option value="M">M</option>
+                        <option value="F">F</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Celular</label>
+                    <input type="text" id="editCelular" name="celular">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Correo Electrónico</label>
+                    <input type="email" id="editCorreo" name="direccion_email">
+                </div>
+                <div class="form-group">
+                    <label>Fecha de Nacimiento</label>
+                    <input type="text" id="editFechaNac" name="fecha_nacimiento">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Estado</label>
+                    <select id="editEstado" name="estado">
+                        <option value="ACTIVO">ACTIVO</option>
+                        <option value="INACTIVO">INACTIVO</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Tipo Documento</label>
+                    <input type="text" id="editTipoDoc" name="tipo_documento">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Nivel Educativo</label>
+                    <input type="text" id="editNivelEdu" name="nivel_educativo">
+                </div>
+                <div class="form-group">
+                    <label>Profesión</label>
+                    <input type="text" id="editProfesion" name="profesion">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">Guardar</button>
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/calendar.js') }}"></script>
+{% endblock %}

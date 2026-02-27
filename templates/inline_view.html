@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+<div style="display:flex;align-items:center;gap:8px">
+    <a href="{{ export_url }}" id="exportBtn" class="btn btn-outline btn-sm" title="Exportar a CSV" onclick="return confirmExport(event)">
+        <span class="material-symbols-outlined" style="font-size:18px;color:var(--colbeef-green)">download</span>
+        Exportar
+    </a>
+    {% if can_write %}
+    <a href="#" class="btn btn-primary btn-sm">+ Add</a>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo;
+    <a href="{{ list_url }}">{{ context_label }}</a> &rsaquo;
+    <a href="{{ back_url }}">{{ context_name }}</a> &rsaquo;
+    <span>DBase Inline</span>
+</div>
+
+<div class="inline-table-container">
+    <div class="table-wrapper" style="overflow-x:auto;max-width:100%">
+        <table class="data-table inline-data-table" id="inlineTable">
+            <thead>
+                <tr>
+                    {% for key, label in columns %}
+                    <th class="sortable" data-col="{{ loop.index0 }}">{{ label }}</th>
+                    {% endfor %}
+                    <th style="width:40px"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for emp in empleados %}
+                <tr>
+                    {% for key, label in columns %}
+                    <td>
+                        {% set val = emp[key] if key in emp else '' %}
+                        {% if val is none %}
+                        {% elif key == 'id_cedula' %}
+                        <span class="inline-icon-cell">{{ val }} <span class="material-symbols-outlined" style="font-size:14px;color:var(--gray-400);cursor:pointer" title="Enviar mensaje">mail</span></span>
+                        {% elif key == 'departamento' %}
+                        <span class="badge-dept">{{ val }}</span>
+                        {% elif key in ('related_hijos', 'related_retirados') and val %}
+                        <span class="related-link">{{ val }}</span>
+                        {% else %}
+                        {{ val }}
+                        {% endif %}
+                    </td>
+                    {% endfor %}
+                    <td>
+                        {% set dk = detail_kwargs.copy() %}
+                        {% if dk.update({"cedula": emp.id_cedula}) %}{% endif %}
+                        <a href="{{ url_for(detail_route, **dk) }}" class="btn-icon" title="Ver detalle">
+                            <span class="material-symbols-outlined">chevron_right</span>
+                        </a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div id="exportModal" class="export-modal-overlay" style="display:none">
+    <div class="modal-box">
+        <h3>Confirm</h3>
+        <p>¿Desea Exportar la Información?</p>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeExportModal()">No</button>
+            <a href="{{ export_url }}" class="btn btn-primary" id="confirmExportBtn">Exportar</a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const exportModal = document.getElementById('exportModal');
+function confirmExport(e) {
+    e.preventDefault();
+    exportModal.style.display = 'flex';
+    return false;
+}
+function closeExportModal() {
+    exportModal.style.display = 'none';
+}
+exportModal.addEventListener('click', function(e) {
+    if (e.target === this) closeExportModal();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeExportModal();
+});
+
+const globalSearch = document.getElementById('globalSearch');
+if (globalSearch) {
+    globalSearch.addEventListener('input', function() {
+        const term = this.value.toLowerCase();
+        const rows = document.querySelectorAll('#inlineTable tbody tr');
+        rows.forEach(row => {
+            row.style.display = row.textContent.toLowerCase().includes(term) ? '' : 'none';
+        });
+    });
+}
+</script>
+{% endblock %}

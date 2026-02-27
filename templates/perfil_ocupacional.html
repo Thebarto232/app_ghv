@@ -1,0 +1,270 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+{% if can_admin %}
+<button class="btn btn-primary btn-sm" onclick="openPerfilModal()">
+    <span class="material-symbols-outlined" style="font-size:18px">add</span> Agregar Perfil
+</button>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+{% if stats|default(none) %}
+<div class="stats-grid animate-in">
+    {% for stat in stats %}
+    <div class="stat-card" style="animation-delay:{{ loop.index0 * 80 }}ms">
+        <div class="stat-icon {{ stat.color }}">
+            <span class="material-symbols-outlined">{{ stat.icon }}</span>
+        </div>
+        <div class="stat-info">
+            <h3 class="count-up" data-target="{{ stat.value }}">0</h3>
+            <p>{{ stat.label }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="table-toolbar">
+    <div class="toolbar-left">
+        <div class="search-filter">
+            <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-secondary)">search</span>
+            <input type="text" id="tableFilter" placeholder="Buscar perfil..." autocomplete="off">
+        </div>
+        {% if filter_columns %}
+        <div class="column-filter">
+            <select id="columnFilter">
+                <option value="">Todas las columnas</option>
+                {% for fc in filter_columns %}
+                <option value="{{ fc.index }}">{{ fc.label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        {% endif %}
+    </div>
+    <div class="toolbar-right">
+        <span class="table-info" id="tableInfo">{{ rows|length }} registros</span>
+    </div>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table paginated-table" id="mainDataTable">
+        <thead>
+            <tr>
+                <th data-sort>Departamento <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                <th data-sort>Área <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                <th data-sort>Perfil Ocupacional <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                <th data-sort style="text-align:center;width:140px">Presupuestados <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                {% if can_admin %}<th style="width:90px"></th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td><span class="badge-dept">{{ row.departamento }}</span></td>
+                <td>{{ row.area }}</td>
+                <td>{{ row.perfil_ocupacional }}</td>
+                <td style="text-align:center">{{ row.presupuestados or '—' }}</td>
+                {% if can_admin %}
+                <td>
+                    <div style="display:flex;gap:4px;justify-content:flex-end">
+                        <button class="btn-icon" title="Editar"
+                            onclick="editPerfil('{{ row.id_perfil }}','{{ row.perfil_ocupacional | replace("'","\\'")|replace('"','\\"') }}','{{ row.area_id }}','{{ row.departamento_id }}','{{ row.presupuestados or '' }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+                        </button>
+                        <button class="btn-icon" title="Eliminar" style="color:#ef4444"
+                            onclick="confirmDelete('{{ url_for('perfil_eliminar', id=row.id_perfil) }}','{{ row.perfil_ocupacional }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+                        </button>
+                    </div>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="pagination-bar" id="paginationBar">
+        <div class="pagination-info">
+            Mostrando <strong id="pageStart">1</strong>-<strong id="pageEnd">50</strong> de <strong id="pageTotal">{{ rows|length }}</strong>
+        </div>
+        <div class="pagination-controls">
+            <button class="btn-page" id="btnFirst"><span class="material-symbols-outlined">first_page</span></button>
+            <button class="btn-page" id="btnPrev"><span class="material-symbols-outlined">chevron_left</span></button>
+            <span class="page-indicator" id="pageIndicator">1 / 1</span>
+            <button class="btn-page" id="btnNext"><span class="material-symbols-outlined">chevron_right</span></button>
+            <button class="btn-page" id="btnLast"><span class="material-symbols-outlined">last_page</span></button>
+        </div>
+    </div>
+</div>
+
+{% if can_admin %}
+<!-- Modal Crear/Editar Perfil -->
+<div class="modal-overlay" id="perfilModal">
+    <div class="modal" style="max-width:600px">
+        <div class="modal-header">
+            <h2 id="perfilModalTitle">Agregar Perfil Ocupacional</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <form id="perfilForm" method="POST" action="{{ url_for('perfil_nuevo') }}">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Departamento<span class="required">*</span></label>
+                    <select id="perfilDepto" class="form-input" required>
+                        <option value="">— Seleccionar —</option>
+                        {% for d in departamentos_list %}
+                        <option value="{{ d.id }}">{{ d.nombre }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Área<span class="required">*</span></label>
+                    <select name="area_id" id="perfilArea" class="form-input" required>
+                        <option value="">— Seleccionar departamento —</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="grid-column:1/-1">
+                    <label class="form-label">Perfil Ocupacional<span class="required">*</span></label>
+                    <input type="text" name="perfil_ocupacional" id="perfilNombre" class="form-input" required autocomplete="off">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Presupuestados</label>
+                    <input type="number" name="presupuestados" id="perfilPresup" class="form-input" min="0">
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary"><span class="material-symbols-outlined" style="font-size:18px">save</span> Guardar</button>
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Confirmar Eliminar -->
+<div class="modal-overlay" id="deleteModal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <h2>Confirmar Eliminación</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:20px">¿Eliminar perfil <strong id="deleteItemName"></strong>?</p>
+        <div class="form-actions" style="border-top:1px solid var(--border);padding-top:16px">
+            <form id="deleteForm" method="POST">
+                <button type="submit" class="btn btn-danger"><span class="material-symbols-outlined" style="font-size:18px">delete</span> Eliminar</button>
+            </form>
+            <button class="btn btn-outline" data-close-modal>Cancelar</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ALL_AREAS = {{ areas_list | tojson }};
+
+function openPerfilModal() {
+    document.getElementById('perfilModalTitle').textContent = 'Agregar Perfil Ocupacional';
+    document.getElementById('perfilForm').action = '{{ url_for("perfil_nuevo") }}';
+    document.getElementById('perfilDepto').value = '';
+    document.getElementById('perfilArea').innerHTML = '<option value="">— Seleccionar departamento —</option>';
+    document.getElementById('perfilNombre').value = '';
+    document.getElementById('perfilPresup').value = '';
+    document.getElementById('perfilModal').classList.add('active');
+}
+
+function editPerfil(id, nombre, areaId, deptoId, presup) {
+    document.getElementById('perfilModalTitle').textContent = 'Editar Perfil Ocupacional';
+    document.getElementById('perfilForm').action = `/perfil/${id}/editar`;
+    document.getElementById('perfilDepto').value = deptoId;
+    filterAreasByDepto(deptoId, areaId);
+    document.getElementById('perfilNombre').value = nombre;
+    document.getElementById('perfilPresup').value = presup;
+    document.getElementById('perfilModal').classList.add('active');
+}
+
+function confirmDelete(url, name) {
+    document.getElementById('deleteItemName').textContent = name;
+    document.getElementById('deleteForm').action = url;
+    document.getElementById('deleteModal').classList.add('active');
+}
+
+function filterAreasByDepto(deptoId, selectedAreaId) {
+    const sel = document.getElementById('perfilArea');
+    sel.innerHTML = '<option value="">— Seleccionar —</option>';
+    const filtered = ALL_AREAS.filter(a => String(a.departamento_id) === String(deptoId));
+    filtered.forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = a.id;
+        opt.textContent = a.nombre;
+        if (String(a.id) === String(selectedAreaId)) opt.selected = true;
+        sel.appendChild(opt);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const deptoSel = document.getElementById('perfilDepto');
+    if (deptoSel) deptoSel.addEventListener('change', () => filterAreasByDepto(deptoSel.value, ''));
+
+    // Count-up
+    document.querySelectorAll('.count-up').forEach(el => {
+        const target = parseInt(el.dataset.target) || 0;
+        if (!target) { el.textContent = '0'; return; }
+        let cur = 0; const step = Math.ceil(target / 50);
+        const t = setInterval(() => { cur += step; if (cur >= target) { cur = target; clearInterval(t); } el.textContent = cur.toLocaleString('es-CO'); }, 16);
+    });
+
+    // Pagination (same logic as data_table.html)
+    const table = document.getElementById('mainDataTable');
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    const allRows = Array.from(tbody.querySelectorAll('tr'));
+    let currentPage = 1, pageSize = 50, visibleRows = allRows;
+
+    function renderPage() {
+        const total = visibleRows.length;
+        const totalPages = pageSize === 0 ? 1 : Math.ceil(total / pageSize);
+        if (currentPage > totalPages) currentPage = totalPages || 1;
+        const start = pageSize === 0 ? 0 : (currentPage - 1) * pageSize;
+        const end = pageSize === 0 ? total : Math.min(start + pageSize, total);
+        allRows.forEach(r => r.classList.add('page-hidden'));
+        visibleRows.forEach((r, i) => { if (i >= start && i < end) r.classList.remove('page-hidden'); });
+        document.getElementById('pageStart').textContent = total > 0 ? start + 1 : 0;
+        document.getElementById('pageEnd').textContent = end;
+        document.getElementById('pageTotal').textContent = total;
+        document.getElementById('pageIndicator').textContent = `${currentPage} / ${totalPages}`;
+        ['btnFirst','btnPrev'].forEach(id => document.getElementById(id).disabled = currentPage <= 1);
+        ['btnNext','btnLast'].forEach(id => document.getElementById(id).disabled = currentPage >= totalPages);
+    }
+
+    document.getElementById('btnFirst')?.addEventListener('click', () => { currentPage = 1; renderPage(); });
+    document.getElementById('btnPrev')?.addEventListener('click', () => { currentPage--; renderPage(); });
+    document.getElementById('btnNext')?.addEventListener('click', () => { currentPage++; renderPage(); });
+    document.getElementById('btnLast')?.addEventListener('click', () => { currentPage = Math.ceil(visibleRows.length / pageSize); renderPage(); });
+
+    const tf = document.getElementById('tableFilter');
+    const cf = document.getElementById('columnFilter');
+    function applyFilter() {
+        const q = (tf?.value || '').toLowerCase();
+        const colIdx = cf ? parseInt(cf.value) : -1;
+        visibleRows = allRows.filter(r => {
+            if (!q) return true;
+            if (colIdx >= 0) return r.children[colIdx]?.textContent.toLowerCase().includes(q);
+            return r.textContent.toLowerCase().includes(q);
+        });
+        allRows.forEach(r => r.style.display = visibleRows.includes(r) ? '' : 'none');
+        currentPage = 1;
+        const info = document.getElementById('tableInfo');
+        if (info) info.textContent = `${visibleRows.length} registros`;
+        renderPage();
+    }
+    tf?.addEventListener('input', applyFilter);
+    cf?.addEventListener('change', applyFilter);
+    renderPage();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo;
+    <a href="{{ url_for('view_fondos') }}">Fondo de Pensiones</a> &rsaquo;
+    <a href="{{ url_for('fondo_detail', fondo_name=fondo_name) }}">{{ fondo_name }}</a> &rsaquo;
+    <a href="{{ url_for('fondo_empleado_detail', fondo_name=fondo_name, cedula=cedula) }}">{{ emp_nombre }}</a> &rsaquo;
+    <span>{{ ret.apellidos_nombre }}</span>
+</div>
+
+<div style="max-width:700px;margin:0 auto">
+    <div class="detail-card">
+        <div class="detail-field"><label>ID_Cedula</label><span>{{ ret.id_cedula }}</span></div>
+        <div class="detail-field"><label>ID_Retiro</label><span>{{ ret.id_retiro }}</span></div>
+        <div class="detail-field"><label>Apellidos y Nombres</label><span>{{ ret.apellidos_nombre }}</span></div>
+        <div class="detail-field"><label>Departamento</label><span>{{ ret.departamento or '—' }}</span></div>
+        <div class="detail-field"><label>Area</label><span>{{ ret.area or '—' }}</span></div>
+        <div class="detail-field"><label>ID_Perfil_Ocupacional</label><span>{{ ret.id_perfil_ocupacional or '—' }}</span></div>
+        <div class="detail-field"><label>Fecha de Ingreso</label><span>{{ ret.fecha_ingreso or '—' }}</span></div>
+        <div class="detail-field"><label>Fecha de Retiro</label><span>{{ ret.fecha_retiro or '—' }}</span></div>
+        <div class="detail-field"><label>Dias laborados</label><span>{{ ret.dias_laborados or '—' }}</span></div>
+        <div class="detail-field"><label>Tipo de Retiro</label><span>{{ ret.tipo_retiro or '—' }}</span></div>
+        {% if ret.motivo %}
+        <div class="detail-field"><label>Motivo</label><span>{{ ret.motivo }}</span></div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

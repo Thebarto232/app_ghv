@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+<a href="{{ back_url }}" class="btn btn-outline">
+    <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span> Volver
+</a>
+{% endblock %}
+
+{% block content %}
+<form method="POST" class="empleado-form" id="empForm" autocomplete="off">
+    <div class="form-section">
+        <h3 class="form-section-title"><span class="material-symbols-outlined">badge</span> Identificación</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Número de Cédula<span class="required">*</span></label>
+                <input type="text" name="id_cedula" class="form-input" value="{{ emp.id_cedula if emp else '' }}"
+                       {{ 'readonly' if emp else '' }} required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Apellidos y Nombres<span class="required">*</span></label>
+                <input type="text" name="apellidos_nombre" class="form-input" value="{{ emp.apellidos_nombre if emp else '' }}" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Tipo Documento</label>
+                <select name="tipo_documento" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    {% for t in tipos_doc %}
+                    <option value="{{ t.tipo_documento }}" {{ 'selected' if emp and emp.tipo_documento == t.tipo_documento }}>{{ t.tipo_documento }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Lugar Expedición</label>
+                <input type="text" name="lugar_expedicion" class="form-input" value="{{ emp.lugar_expedicion if emp else '' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Fecha Expedición</label>
+                <input type="text" name="fecha_expedicion" class="form-input" value="{{ emp.fecha_expedicion if emp else '' }}" placeholder="DD/MM/AAAA">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Fecha Nacimiento</label>
+                <input type="text" name="fecha_nacimiento" class="form-input" value="{{ emp.fecha_nacimiento if emp else '' }}" placeholder="DD/MM/AAAA">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Sexo</label>
+                <select name="sexo" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    <option value="M" {{ 'selected' if emp and emp.sexo == 'M' }}>M - Masculino</option>
+                    <option value="F" {{ 'selected' if emp and emp.sexo == 'F' }}>F - Femenino</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">RH</label>
+                <select name="rh" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    {% for r in ['O+','O-','A+','A-','B+','B-','AB+','AB-'] %}
+                    <option value="{{ r }}" {{ 'selected' if emp and emp.rh == r }}>{{ r }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Estado</label>
+                <select name="estado" class="form-input">
+                    <option value="ACTIVO" {{ 'selected' if not emp or emp.estado == 'ACTIVO' }}>ACTIVO</option>
+                    <option value="INACTIVO" {{ 'selected' if emp and emp.estado == 'INACTIVO' }}>INACTIVO</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-section">
+        <h3 class="form-section-title"><span class="material-symbols-outlined">work</span> Información Laboral</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Departamento</label>
+                <select name="departamento" id="selDepto" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    {% for d in departamentos %}
+                    <option value="{{ d.nombre }}" {{ 'selected' if emp and emp.departamento == d.nombre }}>{{ d.nombre }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Área</label>
+                <select name="area" id="selArea" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    {% for a in areas %}
+                    <option value="{{ a.nombre }}" data-depto="{{ a.departamento }}" {{ 'selected' if emp and emp.area == a.nombre }}>{{ a.nombre }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Perfil Ocupacional</label>
+                <select name="id_perfil_ocupacional" id="selPerfil" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    {% for p in perfiles %}
+                    <option value="{{ p.id_perfil }}" data-area="{{ p.area }}" {{ 'selected' if emp and emp.id_perfil_ocupacional|string == p.id_perfil|string }}>{{ p.perfil_ocupacional }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Fecha de Ingreso</label>
+                <input type="text" name="fecha_ingreso" class="form-input" value="{{ emp.fecha_ingreso if emp else '' }}" placeholder="DD/MM/AAAA">
+            </div>
+            <div class="form-group">
+                <label class="form-label">EPS</label>
+                <select name="eps" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    {% for e in eps_list %}
+                    <option value="{{ e.nombre }}" {{ 'selected' if emp and emp.eps == e.nombre }}>{{ e.nombre }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Fondo de Pensiones</label>
+                <select name="fondo_pensiones" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    {% for f in fondos_list %}
+                    <option value="{{ f.nombre }}" {{ 'selected' if emp and emp.fondo_pensiones == f.nombre }}>{{ f.nombre }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-section">
+        <h3 class="form-section-title"><span class="material-symbols-outlined">school</span> Educación</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Nivel Educativo</label>
+                <select name="nivel_educativo" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    {% for n in niveles %}
+                    <option value="{{ n.nivel }}" {{ 'selected' if emp and emp.nivel_educativo == n.nivel }}>{{ n.nivel }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Profesión</label>
+                <select name="profesion" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    {% for pr in profesiones %}
+                    <option value="{{ pr.profesion }}" {{ 'selected' if emp and emp.profesion == pr.profesion }}>{{ pr.profesion }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">¿Tiene Hijos?</label>
+                <select name="hijos" class="form-input">
+                    <option value="">— Seleccionar —</option>
+                    <option value="SI" {{ 'selected' if emp and emp.hijos == 'SI' }}>SI</option>
+                    <option value="NO" {{ 'selected' if emp and emp.hijos == 'NO' }}>NO</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <div class="form-section">
+        <h3 class="form-section-title"><span class="material-symbols-outlined">location_on</span> Ubicación</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Dirección de Residencia</label>
+                <input type="text" name="direccion_residencia" class="form-input" value="{{ emp.direccion_residencia if emp else '' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Barrio</label>
+                <input type="text" name="barrio_residencia" class="form-input" value="{{ emp.barrio_residencia if emp else '' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Ciudad</label>
+                <input type="text" name="ciudad_residencia" class="form-input" value="{{ emp.ciudad_residencia if emp else '' }}">
+            </div>
+        </div>
+    </div>
+
+    <div class="form-section">
+        <h3 class="form-section-title"><span class="material-symbols-outlined">call</span> Contacto</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Teléfono</label>
+                <input type="text" name="telefono" class="form-input" value="{{ emp.telefono if emp else '' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Celular</label>
+                <input type="text" name="celular" class="form-input" value="{{ emp.celular if emp else '' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Correo Electrónico</label>
+                <input type="email" name="direccion_email" class="form-input" value="{{ emp.direccion_email if emp else '' }}">
+            </div>
+        </div>
+    </div>
+
+    <div class="form-section">
+        <h3 class="form-section-title"><span class="material-symbols-outlined">emergency</span> Contacto de Emergencia</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Nombre Contacto</label>
+                <input type="text" name="contacto_emergencia" class="form-input" value="{{ emp.contacto_emergencia if emp else '' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Teléfono Contacto</label>
+                <input type="text" name="telefono_contacto" class="form-input" value="{{ emp.telefono_contacto if emp else '' }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Parentesco</label>
+                <input type="text" name="parentezco" class="form-input" value="{{ emp.parentezco if emp else '' }}">
+            </div>
+        </div>
+    </div>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">
+            <span class="material-symbols-outlined" style="font-size:18px">save</span>
+            {{ 'Actualizar' if emp else 'Crear Empleado' }}
+        </button>
+        <a href="{{ back_url }}" class="btn btn-outline">Cancelar</a>
+    </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const selDepto = document.getElementById('selDepto');
+    const selArea = document.getElementById('selArea');
+    const selPerfil = document.getElementById('selPerfil');
+    const allAreas = Array.from(selArea.options);
+    const allPerfiles = Array.from(selPerfil.options);
+
+    function filterAreas() {
+        const depto = selDepto.value;
+        const currentArea = selArea.value;
+        selArea.innerHTML = '';
+        allAreas.forEach(opt => {
+            if (!opt.value || opt.dataset.depto === depto) {
+                selArea.appendChild(opt.cloneNode(true));
+            }
+        });
+        const match = Array.from(selArea.options).find(o => o.value === currentArea);
+        if (match) match.selected = true;
+        filterPerfiles();
+    }
+
+    function filterPerfiles() {
+        const area = selArea.value;
+        const currentPerfil = selPerfil.value;
+        selPerfil.innerHTML = '';
+        allPerfiles.forEach(opt => {
+            if (!opt.value || opt.dataset.area === area) {
+                selPerfil.appendChild(opt.cloneNode(true));
+            }
+        });
+        const match = Array.from(selPerfil.options).find(o => o.value === currentPerfil);
+        if (match) match.selected = true;
+    }
+
+    selDepto.addEventListener('change', filterAreas);
+    selArea.addEventListener('change', filterPerfiles);
+
+    {% if emp %}
+    filterAreas();
+    {% endif %}
+
+    document.querySelectorAll('input[name], select[name]').forEach(el => {
+        if (el.type === 'text' && el.name !== 'direccion_email') {
+            el.addEventListener('blur', () => { el.value = el.value.toUpperCase(); });
+        }
+    });
+});
+</script>
+{% endblock %}

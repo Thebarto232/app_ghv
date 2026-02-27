@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo;
+    <a href="{{ url_for('view_fondos') }}">Fondo de Pensiones</a> &rsaquo;
+    <a href="{{ url_for('fondo_detail', fondo_name=fondo_name) }}">{{ fondo_name }}</a> &rsaquo;
+    <span>{{ emp.apellidos_nombre }}</span>
+</div>
+
+<div class="area-emp-layout">
+    <!-- Col 1: Employee data -->
+    <div class="detail-card">
+        <div class="detail-field"><label>Apellidos y Nombres</label><span>{{ emp.apellidos_nombre }}</span></div>
+        <div class="detail-field"><label>Numero de Cedula</label><span>{{ emp.id_cedula }}</span></div>
+        <div class="detail-field"><label>Lugar Expedición Documento de Identidad</label><span>{{ emp.lugar_expedicion or '—' }}</span></div>
+        <div class="detail-field"><label>Fecha Expedición</label><span>{{ emp.fecha_expedicion or '—' }}</span></div>
+        <div class="detail-field"><label>Departamento</label><span style="color:var(--primary);font-weight:500">{{ emp.departamento or '—' }}</span></div>
+        <div class="detail-field"><label>Area</label><span>{{ emp.area or '—' }}</span></div>
+        <div class="detail-field"><label>Perfil Ocupacional</label><span>{{ perfil_nombre or '—' }}</span></div>
+        <div class="detail-field"><label>Fecha de Ingreso a la compañía</label><span>{{ emp.fecha_ingreso or '—' }}</span></div>
+        <div class="detail-field"><label>Sexo</label><span>{{ emp.sexo or '—' }}</span></div>
+        <div class="detail-field"><label>Rh</label><span>{{ emp.rh or '—' }}</span></div>
+        <div class="detail-field"><label>Dirección de Residencia</label><span>{{ emp.direccion_residencia or '—' }}</span></div>
+        <div class="detail-field"><label>Barrio de Residencia</label><span>{{ emp.barrio_residencia or '—' }}</span></div>
+        <div class="detail-field"><label>Ciudad de Residencia</label><span>{{ emp.ciudad_residencia or '—' }}</span></div>
+        <div class="detail-field"><label>Teléfono</label><span>{{ emp.telefono or '—' }}</span></div>
+        <div class="detail-field"><label>Celular</label><span>{{ emp.celular or '—' }}</span></div>
+        <div class="detail-field"><label>Correo Electrónico</label><span>{{ emp.direccion_email or '—' }}</span></div>
+        <div class="detail-field"><label>EPS</label><span>{{ emp.eps or '—' }}</span></div>
+        <div class="detail-field"><label>Fondo de Pensiones</label><span>{{ emp.fondo_pensiones or '—' }}</span></div>
+        <div class="detail-field"><label>Fecha de Nacimiento</label><span>{{ emp.fecha_nacimiento or '—' }}</span></div>
+        <div class="detail-field"><label>¿Tiene Hijos?</label><span>{{ emp.hijos or '—' }}</span></div>
+        <div class="detail-field">
+            <label>Estado</label>
+            <span>
+                {% if emp.estado == 'ACTIVO' %}
+                    <span class="badge badge-active">ACTIVO</span>
+                {% else %}
+                    <span class="badge badge-inactive">{{ emp.estado }}</span>
+                {% endif %}
+            </span>
+        </div>
+        <div class="detail-field"><label>Tipo Documento</label><span>{{ emp.tipo_documento or '—' }}</span></div>
+        <div class="detail-field"><label>Nivel Educativo</label><span>{{ emp.nivel_educativo or '—' }}</span></div>
+        <div class="detail-field"><label>Profesión</label><span>{{ emp.profesion or '—' }}</span></div>
+        <div class="detail-field"><label>Contacto de Emergencia</label><span>{{ emp.contacto_emergencia or '—' }}</span></div>
+        <div class="detail-field"><label>Teléfono Contacto</label><span>{{ emp.telefono_contacto or '—' }}</span></div>
+        <div class="detail-field"><label>Parentesco</label><span>{{ emp.parentezco or '—' }}</span></div>
+    </div>
+
+    <!-- Col 2: Related tables -->
+    <div>
+        {% if hijos|length > 0 %}
+        <div class="related-section">
+            <h3 class="related-title">Related Hijos <span class="related-count">{{ hijos|length }}</span></h3>
+            <div class="table-wrapper">
+                <table class="data-table">
+                    <thead><tr><th>Apellidos y Nombres</th><th>Sexo</th><th>Fecha de Nacimiento</th></tr></thead>
+                    <tbody>
+                        {% for h in hijos %}
+                        <tr>
+                            <td>{{ h.apellidos_nombre }}</td>
+                            <td>{{ h.sexo }}</td>
+                            <td>{{ h.fecha_nacimiento }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="related-section">
+            <h3 class="related-title">Related Retirados <span class="related-count">{{ retirados|length }}</span></h3>
+            <div class="table-wrapper">
+                {% if retirados|length > 0 %}
+                <table class="data-table">
+                    <thead><tr><th>ID_Cedula</th><th>ID_Retiro</th><th>Apellidos y Nombres</th><th>Departamento</th><th></th></tr></thead>
+                    <tbody>
+                        {% for r in retirados %}
+                        <tr>
+                            <td>{{ r.id_cedula }}</td>
+                            <td>{{ r.id_retiro }}</td>
+                            <td>{{ r.apellidos_nombre }}</td>
+                            <td>{{ r.departamento or '—' }}</td>
+                            <td>
+                                <a href="{{ url_for('fondo_retirado_detail', fondo_name=fondo_name, cedula=emp.id_cedula, retiro_id=r.id_retiro) }}" class="btn-icon">
+                                    <span class="material-symbols-outlined">chevron_right</span>
+                                </a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+                {% else %}
+                <div class="empty-state" style="padding:20px"><p>Sin registros de retiro</p></div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Col 3: Calculated fields -->
+    <div class="detail-card">
+        <div class="detail-field"><label>Contador</label><span>1</span></div>
+        <div class="detail-field"><label>Mes Cumple</label><span>{{ mes_cumple or '—' }}</span></div>
+        <div class="detail-field"><label>Cumpleaños</label><span>{{ cumple_str or '—' }}</span></div>
+        <div class="detail-field"><label>Aniversario Laboral</label><span>{{ aniv_str or '—' }}</span></div>
+        <div class="detail-field"><label>Antigüedad</label><span>{{ antiguedad or '—' }}</span></div>
+    </div>
+</div>
+{% endblock %}

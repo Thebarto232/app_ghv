@@ -1,0 +1,2408 @@
+from flask import (
+    Flask, render_template, request, redirect, url_for,
+    flash, jsonify, session, g, make_response,
+)
+from werkzeug.security import generate_password_hash, check_password_hash
+from functools import wraps
+import mysql.connector
+import io
+from datetime import datetime, date
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+from config import Config
+
+app = Flask(__name__)
+app.config.from_object(Config)
+
+
+# ── DB helpers ────────────────────────────────────────────────
+
+def get_db():
+    return mysql.connector.connect(
+        host=app.config["MYSQL_HOST"],
+        port=app.config["MYSQL_PORT"],
+        user=app.config["MYSQL_USER"],
+        password=app.config["MYSQL_PASSWORD"],
+        database=app.config["MYSQL_DATABASE"],
+    )
+
+
+def query(sql, params=None, one=False):
+    conn = get_db()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute(sql, params or ())
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    return rows[0] if one and rows else rows if not one else None
+
+
+def execute(sql, params=None):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute(sql, params or ())
+    conn.commit()
+    lid = cursor.lastrowid
+    cursor.close()
+    conn.close()
+    return lid
+
+
+# ── Auth helpers ──────────────────────────────────────────────
+
+ROLE_PERMISSIONS = {
+    "ADMIN":                 "ALL",
+    "COORD. GH":             "ALL",
+    "GESTOR DE CONTRATACION":"WRITE",
+    "BIENESTAR SOCIAL":      "WRITE",
+    "GESTOR DE NOMINA":      "WRITE",
+    "GESTOR SST":            "READ",
+}
+
+
+def get_current_user():
+    if "user_id" not in session:
+        return None
+    if not hasattr(g, "_user"):
+        g._user = query(
+            "SELECT * FROM usuario WHERE id_user = %s AND estado = 1",
+            (session["user_id"],), one=True,
+        )
+    return g._user
+
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if get_current_user() is None:
+            flash("Debes iniciar sesión", "error")
+            return redirect(url_for("login"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+def role_required(*allowed):
+    """allowed can be 'ALL', 'WRITE', 'READ' (minimum level)."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            user = get_current_user()
+            if user is None:
+                return redirect(url_for("login"))
+            perm = ROLE_PERMISSIONS.get(user["rol"], "READ")
+            levels = {"READ": 0, "WRITE": 1, "ALL": 2}
+            min_level = max(levels.get(a, 0) for a in allowed)
+            if levels.get(perm, 0) < min_level:
+                flash("No tienes permisos para esta acción", "error")
+                return redirect(url_for("home"))
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+
+def module_required(module_key):
+    """Restrict access to users whose role has the given module enabled."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            user = get_current_user()
+            if user is None:
+                return redirect(url_for("login"))
+            rol = user["rol"]
+            role_mods = _ROLE_MODULES.get(rol, _DEFAULT_MODULES)
+            if not role_mods.get(module_key, False):
+                flash("No tienes acceso a este módulo", "error")
+                return redirect(url_for("home"))
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+
+
+# Qué módulos del sidebar/home puede ver cada rol.
+# Claves usadas en base.html y home.html con {{ vm.* }}
+_ROLE_MODULES = {
+    "ADMIN": {
+        "organizacion": True,   # Áreas, Deptos, Perfiles
+        "personal":     True,   # Personal Activo/Inactivo
+        "retiro":       True,   # Retiro de Personal
+        "familia":      True,   # Hijos Activos/Inactivos
+        "eventos":      True,   # Cumpleaños, Aniversario
+        "eps":          True,   # EPS
+        "fondos":       True,   # Fondo de Pensiones
+        "reportes":     True,   # Total Hijos, Dashboard
+        "admin":        True,   # Home Setting, Usuarios
+    },
+    "COORD. GH": {
+        "organizacion": True,
+        "personal":     True,
+        "retiro":       True,
+        "familia":      True,
+        "eventos":      True,
+        "eps":          True,
+        "fondos":       True,
+        "reportes":     True,
+        "admin":        True,
+    },
+    "GESTOR DE CONTRATACION": {
+        "organizacion": False,
+        "personal":     True,
+        "retiro":       True,
+        "familia":      True,
+        "eventos":      True,
+        "eps":          True,
+        "fondos":       True,
+        "reportes":     True,
+        "admin":        False,
+    },
+    "BIENESTAR SOCIAL": {
+        "organizacion": False,
+        "personal":     True,
+        "retiro":       False,
+        "familia":      True,
+        "eventos":      True,
+        "eps":          False,
+        "fondos":       False,
+        "reportes":     True,   # solo Total Hijos
+        "dashboard":    False,  # sin Dashboard
+        "admin":        False,
+    },
+    "GESTOR DE NOMINA": {
+        "organizacion": False,
+        "personal":     True,
+        "retiro":       True,
+        "familia":      False,
+        "eventos":      False,
+        "eps":          True,
+        "fondos":       True,
+        "reportes":     True,   # solo Dashboard
+        "total_hijos":  False,
+        "admin":        False,
+    },
+    "GESTOR SST": {
+        "organizacion": False,
+        "personal":     True,   # solo Activo (restringido en ruta)
+        "retiro":       False,
+        "familia":      False,
+        "eventos":      False,
+        "eps":          False,
+        "fondos":       False,
+        "reportes":     True,   # solo Dashboard
+        "total_hijos":  False,
+        "admin":        False,
+    },
+}
+
+# Módulo por defecto (sin rol): nada visible
+_DEFAULT_MODULES = {k: False for k in ["organizacion","personal","retiro","familia","eventos","eps","fondos","reportes","admin","dashboard","total_hijos"]}
+
+
+@app.context_processor
+def inject_user():
+    user = get_current_user()
+    can_write = False
+    can_admin = False
+    vm = dict(_DEFAULT_MODULES)   # visible_modules
+    if user:
+        rol = user["rol"]
+        perm = ROLE_PERMISSIONS.get(rol, "READ")
+        can_write = perm in ("WRITE", "ALL")
+        can_admin = perm == "ALL"
+        base = _ROLE_MODULES.get(rol, _DEFAULT_MODULES)
+        vm = dict(_DEFAULT_MODULES)
+        vm.update(base)
+        # Derivados: dashboard y total_hijos heredan de reportes si no se definen
+        if "dashboard" not in base:
+            vm["dashboard"] = vm.get("reportes", False)
+        if "total_hijos" not in base:
+            vm["total_hijos"] = vm.get("reportes", False)
+        # GESTOR DE NOMINA: no ve total_hijos
+        if rol == "GESTOR DE NOMINA":
+            vm["total_hijos"] = False
+        # BIENESTAR SOCIAL: no ve dashboard
+        if rol == "BIENESTAR SOCIAL":
+            vm["dashboard"] = False
+        # GESTOR SST: solo personal activo (inactivo también oculto)
+        if rol == "GESTOR SST":
+            vm["personal_inactivo"] = False
+        else:
+            vm["personal_inactivo"] = vm.get("personal", False)
+    return dict(current_user=user, can_write=can_write, can_admin=can_admin, vm=vm)
+
+
+# ── AUTH ROUTES ───────────────────────────────────────────────
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if get_current_user():
+        return redirect(url_for("home"))
+
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+
+        user = query(
+            "SELECT * FROM usuario WHERE LOWER(email) = %s AND estado = 1",
+            (email,), one=True,
+        )
+
+        if user and user.get("password_hash") and check_password_hash(user["password_hash"], password):
+            session.clear()
+            session["user_id"] = user["id_user"]
+            session.permanent = True
+            return redirect(url_for("home"))
+
+        flash("Correo o contraseña incorrectos", "error")
+
+    return render_template("login.html")
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    """Ruta deshabilitada: la creación de usuarios es exclusiva del ADMIN desde /users."""
+    flash("El acceso al sistema debe ser solicitado al administrador.", "error")
+    return redirect(url_for("login"))
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    flash("Sesión cerrada", "info")
+    return redirect(url_for("login"))
+
+
+# ── HOME ─────────────────────────────────────────────────────
+
+@app.route("/")
+@login_required
+def home():
+    return render_template("home.html", active_page="Home")
+
+
+# ── CUMPLEAÑOS ────────────────────────────────────────────────
+
+def parse_fecha(fecha_str):
+    if not fecha_str:
+        return None
+    if isinstance(fecha_str, date):
+        return fecha_str
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(str(fecha_str).strip(), fmt).date()
+        except (ValueError, AttributeError):
+            continue
+    return None
+
+
+def enrich_empleados(empleados):
+    """Add calculated fields, related hijos count and related retirados count."""
+    today = date.today()
+    hijos_counts = query(
+        "SELECT id_cedula, COUNT(*) AS cnt FROM hijo GROUP BY id_cedula"
+    )
+    hijos_map = {r["id_cedula"]: int(r["cnt"]) for r in hijos_counts}
+    ret_counts = query(
+        "SELECT id_cedula, COUNT(*) AS cnt FROM retirado GROUP BY id_cedula"
+    )
+    ret_map = {r["id_cedula"]: int(r["cnt"]) for r in ret_counts}
+
+    perfil_rows = query("SELECT id_perfil, perfil_ocupacional FROM perfil_ocupacional")
+    perfil_map = {str(r["id_perfil"]): r["perfil_ocupacional"] for r in perfil_rows}
+
+    for emp in empleados:
+        cid = emp["id_cedula"]
+        emp["perfil_ocupacional_nombre"] = perfil_map.get(str(emp.get("id_perfil_ocupacional", "")), "")
+        raw_bd = emp.get("fecha_nacimiento", "")
+        bd = raw_bd if isinstance(raw_bd, date) else parse_fecha(raw_bd)
+        raw_fi = emp.get("fecha_ingreso", "")
+        fi = raw_fi if isinstance(raw_fi, date) else parse_fecha(raw_fi)
+        emp["mes_cumple"] = bd.month if bd else ""
+        emp["cumpleanos"] = ""
+        if bd:
+            try:
+                d = date(today.year, bd.month, bd.day)
+                emp["cumpleanos"] = f"{d.month}/{d.day}/{d.year}"
+            except ValueError:
+                pass
+        emp["aniversario_laboral"] = ""
+        emp["antiguedad"] = ""
+        if fi:
+            try:
+                d = date(today.year, fi.month, fi.day)
+                emp["aniversario_laboral"] = f"{d.month}/{d.day}/{d.year}"
+            except ValueError:
+                pass
+            emp["antiguedad"] = today.year - fi.year
+        emp["contador"] = 1
+        h_cnt = hijos_map.get(cid, 0)
+        emp["related_hijos"] = f"Related Hijos ({h_cnt})" if h_cnt else ""
+        r_cnt = ret_map.get(cid, 0)
+        emp["related_retirados"] = f"Related Retirados ({r_cnt})" if r_cnt else ""
+    return empleados
+
+
+INLINE_COLUMNS = [
+    ("apellidos_nombre", "Apellidos y Nombres"),
+    ("id_cedula", "Numero de Cedula"),
+    ("lugar_expedicion", "Lugar Expedicion Documento de Ide..."),
+    ("fecha_expedicion", "Fecha Expedicion"),
+    ("departamento", "Departamento"),
+    ("area", "Area"),
+    ("perfil_ocupacional_nombre", "Perfil Ocupacional"),
+    ("fecha_ingreso", "Fecha de Ingreso a la compañia"),
+    ("sexo", "Sexo"),
+    ("rh", "Rh"),
+    ("direccion_residencia", "Direccion de Residencia"),
+    ("barrio_residencia", "Barrio de Residencia"),
+    ("ciudad_residencia", "Ciudad de Residencia"),
+    ("telefono", "Telefono"),
+    ("celular", "Celular"),
+    ("direccion_email", "Correo Electronico"),
+    ("eps", "EPS"),
+    ("fondo_pensiones", "Fondo de Pensiones"),
+    ("fecha_nacimiento", "Fecha de Nacimiento"),
+    ("hijos", "¿Tiene Hijos?"),
+    ("estado", "Estado"),
+    ("tipo_documento", "Tipo Documento"),
+    ("nivel_educativo", "Nivel Educativo"),
+    ("profesion", "Profesion"),
+    ("contacto_emergencia", "contactoEmergencia"),
+    ("telefono_contacto", "TelefonoContacto"),
+    ("parentezco", "parentezco"),
+    ("related_hijos", "Related Hijos"),
+    ("contador", "Contador"),
+    ("mes_cumple", "Mes Cumple"),
+    ("cumpleanos", "Cumpleaños"),
+    ("aniversario_laboral", "Aniversario Laboral"),
+    ("antiguedad", "Antigüedad"),
+    ("related_retirados", "Related Retirados"),
+]
+
+
+def export_excel_response_generic(rows, columns, filename_prefix):
+    """Generate a styled Excel (.xlsx) download with given columns list of (key, label)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+
+    header_font = Font(name="Calibri", bold=True, size=11, color="FFFFFF")
+    header_fill = PatternFill(start_color="2D9E3F", end_color="2D9E3F", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell_font = Font(name="Calibri", size=10)
+    cell_align = Alignment(vertical="center", wrap_text=False)
+    thin_border = Border(
+        left=Side(style="thin", color="D1D5DB"),
+        right=Side(style="thin", color="D1D5DB"),
+        top=Side(style="thin", color="D1D5DB"),
+        bottom=Side(style="thin", color="D1D5DB"),
+    )
+    alt_fill = PatternFill(start_color="F0FDF4", end_color="F0FDF4", fill_type="solid")
+
+    headers = [label for _, label in columns]
+    for c, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=c, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = thin_border
+
+    for r, row in enumerate(rows, 2):
+        for c, (key, _) in enumerate(columns, 1):
+            val = row.get(key, "")
+            if val is None:
+                val = ""
+            cell = ws.cell(row=r, column=c, value=val)
+            cell.font = cell_font
+            cell.alignment = cell_align
+            cell.border = thin_border
+            if r % 2 == 0:
+                cell.fill = alt_fill
+
+    for c, (key, label) in enumerate(columns, 1):
+        max_len = len(label)
+        for r in range(2, len(rows) + 2):
+            val = ws.cell(row=r, column=c).value
+            if val:
+                max_len = max(max_len, len(str(val)))
+        ws.column_dimensions[get_column_letter(c)].width = min(max_len + 3, 45)
+
+    ws.auto_filter.ref = ws.dimensions
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    today_str = date.today().strftime("%Y-%m-%d")
+    resp = make_response(buf.getvalue())
+    resp.headers["Content-Type"] = (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    resp.headers["Content-Disposition"] = (
+        f'attachment; filename="{filename_prefix}.ViewData.{today_str}.xlsx"'
+    )
+    return resp
+
+
+def export_excel_response(empleados, filename_prefix):
+    """Shortcut for empleado exports using INLINE_COLUMNS."""
+    return export_excel_response_generic(empleados, INLINE_COLUMNS, filename_prefix)
+
+
+@app.route("/cumpleanos")
+@login_required
+@module_required("eventos")
+def cumpleanos():
+    return render_template("cumpleanos.html", active_page="Cumpleaños")
+
+
+@app.route("/api/cumpleanos")
+@login_required
+def api_cumpleanos():
+    year = request.args.get("year", date.today().year, type=int)
+    month = request.args.get("month", date.today().month, type=int)
+
+    rows = query(
+        "SELECT id_cedula, apellidos_nombre, fecha_nacimiento, departamento, "
+        "area, sexo, celular, direccion_email, estado, tipo_documento, "
+        "nivel_educativo, profesion, contacto_emergencia, telefono_contacto, parentezco "
+        "FROM empleado WHERE estado = 'ACTIVO'"
+    )
+
+    results = []
+    for r in rows:
+        bd = parse_fecha(r["fecha_nacimiento"])
+        if bd and bd.month == month:
+            try:
+                cumple_date = date(year, bd.month, bd.day)
+            except ValueError:
+                continue
+            results.append({
+                "id_cedula": r["id_cedula"],
+                "apellidos_nombre": r["apellidos_nombre"],
+                "fecha_nacimiento": r["fecha_nacimiento"],
+                "departamento": r["departamento"] or "",
+                "area": r["area"] or "",
+                "sexo": r["sexo"] or "",
+                "celular": r["celular"] or "",
+                "correo": r["direccion_email"] or "",
+                "estado": r["estado"] or "",
+                "tipo_documento": r["tipo_documento"] or "",
+                "nivel_educativo": r["nivel_educativo"] or "",
+                "profesion": r["profesion"] or "",
+                "contacto_emergencia": r["contacto_emergencia"] or "",
+                "telefono_contacto": r["telefono_contacto"] or "",
+                "parentezco": r["parentezco"] or "",
+                "dia": bd.day,
+                "mes_cumple": bd.month,
+                "cumpleanos": cumple_date.strftime("%d/%m/%Y"),
+            })
+
+    return jsonify(results)
+
+
+# ── ANIVERSARIO LABORAL ────────────────────────────────────────
+
+@app.route("/aniversario")
+@login_required
+@module_required("eventos")
+def aniversario():
+    return render_template("aniversario.html", active_page="Aniversario Laboral")
+
+
+@app.route("/api/aniversario")
+@login_required
+def api_aniversario():
+    year = request.args.get("year", date.today().year, type=int)
+    month = request.args.get("month", date.today().month, type=int)
+
+    rows = query(
+        "SELECT e.id_cedula, e.apellidos_nombre, e.fecha_ingreso, e.fecha_nacimiento, "
+        "e.departamento, e.area, e.id_perfil_ocupacional, e.sexo, e.celular, "
+        "e.direccion_email, e.estado, e.tipo_documento, e.nivel_educativo, e.profesion "
+        "FROM empleado e WHERE e.estado = 'ACTIVO'"
+    )
+
+    results = []
+    today = date.today()
+    for r in rows:
+        fi = parse_fecha(r["fecha_ingreso"])
+        if fi and fi.month == month:
+            try:
+                aniv_date = date(year, fi.month, fi.day)
+            except ValueError:
+                continue
+            antiguedad = year - fi.year
+
+            perfil = ""
+            if r["id_perfil_ocupacional"]:
+                p = query(
+                    "SELECT perfil_ocupacional FROM perfil_ocupacional WHERE id_perfil = %s",
+                    (str(r["id_perfil_ocupacional"]),), one=True,
+                )
+                if p:
+                    perfil = p["perfil_ocupacional"]
+
+            bd = parse_fecha(r["fecha_nacimiento"])
+            mes_cumple = bd.month if bd else ""
+            cumple_str = ""
+            if bd:
+                try:
+                    cumple_str = date(year, bd.month, bd.day).strftime("%d/%m/%Y")
+                except ValueError:
+                    pass
+
+            results.append({
+                "id_cedula": r["id_cedula"],
+                "apellidos_nombre": r["apellidos_nombre"],
+                "fecha_ingreso": r["fecha_ingreso"],
+                "departamento": r["departamento"] or "",
+                "area": r["area"] or "",
+                "perfil_ocupacional": perfil,
+                "sexo": r["sexo"] or "",
+                "celular": r["celular"] or "",
+                "correo": r["direccion_email"] or "",
+                "estado": r["estado"] or "",
+                "tipo_documento": r["tipo_documento"] or "",
+                "nivel_educativo": r["nivel_educativo"] or "",
+                "profesion": r["profesion"] or "",
+                "mes_cumple": mes_cumple,
+                "cumpleanos": cumple_str,
+                "aniversario_laboral": aniv_date.strftime("%d/%m/%Y"),
+                "antiguedad": antiguedad,
+                "dia": fi.day,
+            })
+
+    return jsonify(results)
+
+
+@app.route("/api/empleado/<id_cedula>", methods=["GET"])
+@login_required
+def api_empleado_get(id_cedula):
+    emp = query("SELECT * FROM empleado WHERE id_cedula = %s", (id_cedula,), one=True)
+    if not emp:
+        return jsonify({"error": "No encontrado"}), 404
+    return jsonify(emp)
+
+
+@app.route("/api/empleado/<id_cedula>", methods=["PUT"])
+@login_required
+@role_required("WRITE")
+def api_empleado_update(id_cedula):
+    data = request.get_json()
+    allowed = [
+        "apellidos_nombre", "departamento", "area", "sexo", "celular",
+        "direccion_email", "fecha_nacimiento", "estado", "tipo_documento",
+        "nivel_educativo", "profesion", "contacto_emergencia",
+        "telefono_contacto", "parentezco",
+    ]
+    sets = []
+    vals = []
+    for key in allowed:
+        if key in data:
+            sets.append(f"{key} = %s")
+            vals.append(data[key])
+    if not sets:
+        return jsonify({"error": "Sin cambios"}), 400
+    vals.append(id_cedula)
+    execute(f"UPDATE empleado SET {', '.join(sets)} WHERE id_cedula = %s", tuple(vals))
+    return jsonify({"ok": True})
+
+
+# ── PERSONAL ACTIVO ──────────────────────────────────────────
+
+@app.route("/personal-activo")
+@login_required
+def personal_activo():
+    rows = query(
+        "SELECT id_cedula, apellidos_nombre, tipo_documento, departamento, "
+        "area, sexo, fecha_ingreso, celular, eps, estado "
+        "FROM empleado WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre"
+    )
+    sex_m = sum(1 for r in rows if r.get("sexo") == "M")
+    sex_f = sum(1 for r in rows if r.get("sexo") == "F")
+    deptos = len(set(r["departamento"] for r in rows if r.get("departamento")))
+    columns = [
+        {"key": "id_cedula",        "label": "Cédula"},
+        {"key": "apellidos_nombre", "label": "Nombre"},
+        {"key": "tipo_documento",   "label": "Tipo Doc"},
+        {"key": "departamento",     "label": "Departamento", "type": "dept"},
+        {"key": "area",             "label": "Área"},
+        {"key": "sexo",             "label": "Sexo", "type": "sex"},
+        {"key": "fecha_ingreso",    "label": "Fecha Ingreso"},
+        {"key": "celular",          "label": "Celular"},
+        {"key": "eps",              "label": "EPS"},
+    ]
+    stats = [
+        {"value": len(rows), "label": "Total Activos",   "icon": "group",      "color": "green"},
+        {"value": sex_m,     "label": "Masculino",       "icon": "male",       "color": "blue"},
+        {"value": sex_f,     "label": "Femenino",        "icon": "female",     "color": "purple"},
+        {"value": deptos,    "label": "Departamentos",   "icon": "business",   "color": "orange"},
+    ]
+    filter_columns = [
+        {"index": 3, "label": "Departamento"},
+        {"index": 5, "label": "Sexo"},
+        {"index": 8, "label": "EPS"},
+    ]
+    return render_template(
+        "data_table.html", active_page="Personal Activo",
+        rows=rows, columns=columns, stats=stats,
+        detail_route="detalle_empleado", pk="id_cedula",
+        export_key="personal_activo", filter_columns=filter_columns,
+        show_add_btn=True, add_url=url_for("crear_empleado"),
+    )
+
+
+EMPLEADO_FIELDS = [
+    {"key": "id_cedula",            "label": "Cédula"},
+    {"key": "apellidos_nombre",     "label": "Nombre Completo"},
+    {"key": "tipo_documento",       "label": "Tipo Documento"},
+    {"key": "lugar_expedicion",     "label": "Lugar Expedición"},
+    {"key": "fecha_expedicion",     "label": "Fecha Expedición"},
+    {"key": "fecha_nacimiento",     "label": "Fecha Nacimiento"},
+    {"key": "sexo",                 "label": "Sexo"},
+    {"key": "rh",                   "label": "RH"},
+    {"key": "departamento",         "label": "Departamento"},
+    {"key": "area",                 "label": "Área"},
+    {"key": "fecha_ingreso",        "label": "Fecha Ingreso"},
+    {"key": "direccion_residencia", "label": "Dirección"},
+    {"key": "barrio_residencia",    "label": "Barrio"},
+    {"key": "ciudad_residencia",    "label": "Ciudad"},
+    {"key": "telefono",             "label": "Teléfono"},
+    {"key": "celular",              "label": "Celular"},
+    {"key": "direccion_email",      "label": "Email"},
+    {"key": "eps",                  "label": "EPS"},
+    {"key": "fondo_pensiones",      "label": "Fondo Pensiones"},
+    {"key": "nivel_educativo",      "label": "Nivel Educativo"},
+    {"key": "profesion",            "label": "Profesión"},
+    {"key": "hijos",                "label": "¿Tiene Hijos?"},
+    {"key": "contacto_emergencia",  "label": "Contacto Emergencia"},
+    {"key": "telefono_contacto",    "label": "Tel. Contacto"},
+    {"key": "parentezco",           "label": "Parentesco"},
+    {"key": "estado",               "label": "Estado", "type": "badge"},
+]
+
+
+def _form_context():
+    """Lookup data for the empleado form dropdowns."""
+    return dict(
+        tipos_doc=query("SELECT DISTINCT tipo_documento FROM tipo_documento ORDER BY tipo_documento"),
+        departamentos=query("SELECT nombre FROM departamento ORDER BY nombre"),
+        areas=query(
+            "SELECT a.id, a.nombre, d.nombre AS departamento "
+            "FROM area a JOIN departamento d ON a.departamento_id = d.id ORDER BY a.nombre"
+        ),
+        perfiles=query(
+            "SELECT p.id_perfil, p.perfil_ocupacional, a.nombre AS area "
+            "FROM perfil_ocupacional p JOIN area a ON p.area_id = a.id "
+            "ORDER BY p.perfil_ocupacional"
+        ),
+        eps_list=query("SELECT nombre FROM eps ORDER BY nombre"),
+        fondos_list=query("SELECT nombre FROM fondo_pensiones ORDER BY nombre"),
+        niveles=query("SELECT DISTINCT nivel FROM nivel_educativo ORDER BY nivel"),
+        profesiones=query("SELECT DISTINCT profesion FROM profesion ORDER BY profesion"),
+    )
+
+
+@app.route("/personal-activo/<id>")
+@login_required
+def detalle_empleado(id):
+    emp = query("SELECT * FROM empleado WHERE id_cedula = %s", (id,), one=True)
+    if not emp:
+        flash("Empleado no encontrado", "error")
+        return redirect(url_for("personal_activo"))
+    hijos = query("SELECT * FROM hijo WHERE id_cedula = %s ORDER BY fecha_nacimiento", (id,))
+    retirados = query(
+        "SELECT id_retiro, fecha_retiro, tipo_retiro, dias_laborados, motivo "
+        "FROM retirado WHERE id_cedula = %s ORDER BY fecha_retiro DESC", (id,)
+    )
+    return render_template(
+        "detail.html", active_page="Personal Activo",
+        data=emp, fields=EMPLEADO_FIELDS, children=hijos,
+        retirados=retirados,
+        back_url=url_for("personal_activo"),
+    )
+
+
+@app.route("/personal-activo/nuevo", methods=["GET", "POST"])
+@login_required
+@role_required("WRITE")
+def crear_empleado():
+    if request.method == "POST":
+        cedula = request.form.get("id_cedula", "").strip()
+        nombre = request.form.get("apellidos_nombre", "").strip().upper()
+        if not cedula or not nombre:
+            flash("Cédula y Nombre son obligatorios", "error")
+            return redirect(url_for("crear_empleado"))
+        existing = query("SELECT id_cedula FROM empleado WHERE id_cedula = %s", (cedula,), one=True)
+        if existing:
+            flash(f"Ya existe un empleado con cédula {cedula}", "error")
+            return redirect(url_for("crear_empleado"))
+        fields_list = [
+            "id_cedula", "apellidos_nombre", "tipo_documento", "lugar_expedicion",
+            "fecha_expedicion", "departamento", "area", "id_perfil_ocupacional",
+            "fecha_ingreso", "sexo", "rh", "direccion_residencia", "barrio_residencia",
+            "ciudad_residencia", "telefono", "celular", "direccion_email", "eps",
+            "fondo_pensiones", "fecha_nacimiento", "hijos", "estado", "nivel_educativo",
+            "profesion", "contacto_emergencia", "telefono_contacto", "parentezco",
+        ]
+        vals = []
+        for f in fields_list:
+            v = request.form.get(f, "").strip()
+            vals.append(v if v else None)
+        placeholders = ", ".join(["%s"] * len(fields_list))
+        cols = ", ".join(fields_list)
+        execute(f"INSERT INTO empleado ({cols}) VALUES ({placeholders})", tuple(vals))
+        flash(f"Empleado {nombre} creado exitosamente", "success")
+        return redirect(url_for("detalle_empleado", id=cedula))
+
+    ctx = _form_context()
+    return render_template(
+        "empleado_form.html", active_page="Personal Activo",
+        emp=None, back_url=url_for("personal_activo"), **ctx,
+    )
+
+
+@app.route("/personal-activo/<id>/editar", methods=["GET", "POST"])
+@login_required
+@role_required("WRITE")
+def editar_empleado(id):
+    emp = query("SELECT * FROM empleado WHERE id_cedula = %s", (id,), one=True)
+    if not emp:
+        flash("Empleado no encontrado", "error")
+        return redirect(url_for("personal_activo"))
+
+    if request.method == "POST":
+        update_fields = [
+            "apellidos_nombre", "tipo_documento", "lugar_expedicion", "fecha_expedicion",
+            "departamento", "area", "id_perfil_ocupacional", "fecha_ingreso", "sexo", "rh",
+            "direccion_residencia", "barrio_residencia", "ciudad_residencia", "telefono",
+            "celular", "direccion_email", "eps", "fondo_pensiones", "fecha_nacimiento",
+            "hijos", "estado", "nivel_educativo", "profesion", "contacto_emergencia",
+            "telefono_contacto", "parentezco",
+        ]
+        sets = []
+        vals = []
+        for f in update_fields:
+            v = request.form.get(f, "").strip()
+            sets.append(f"{f} = %s")
+            vals.append(v if v else None)
+        vals.append(id)
+        execute(f"UPDATE empleado SET {', '.join(sets)} WHERE id_cedula = %s", tuple(vals))
+        flash("Empleado actualizado exitosamente", "success")
+        return redirect(url_for("detalle_empleado", id=id))
+
+    ctx = _form_context()
+    return render_template(
+        "empleado_form.html", active_page="Personal Activo",
+        emp=emp, back_url=url_for("detalle_empleado", id=id), **ctx,
+    )
+
+
+@app.route("/personal-activo/<id>/eliminar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def eliminar_empleado(id):
+    execute("DELETE FROM hijo WHERE id_cedula = %s", (id,))
+    execute("DELETE FROM retirado WHERE id_cedula = %s", (id,))
+    execute("DELETE FROM empleado WHERE id_cedula = %s", (id,))
+    flash("Empleado eliminado", "success")
+    return redirect(url_for("personal_activo"))
+
+
+@app.route("/personal-activo/<id>/retirar", methods=["GET", "POST"])
+@login_required
+@role_required("WRITE")
+def retirar_empleado(id):
+    emp = query("SELECT * FROM empleado WHERE id_cedula = %s", (id,), one=True)
+    if not emp:
+        flash("Empleado no encontrado", "error")
+        return redirect(url_for("personal_activo"))
+
+    if request.method == "POST":
+        fecha_retiro = request.form.get("fecha_retiro", "").strip()
+        tipo_retiro = request.form.get("tipo_retiro", "").strip()
+        dias_laborados = request.form.get("dias_laborados", "").strip()
+        motivo = request.form.get("motivo", "").strip()
+        if not fecha_retiro or not tipo_retiro:
+            flash("Fecha y Tipo de retiro son obligatorios", "error")
+            return redirect(url_for("retirar_empleado", id=id))
+
+        last = query("SELECT id_retiro FROM retirado ORDER BY id_retiro DESC LIMIT 1", one=True)
+        if last:
+            try:
+                num = int(str(last["id_retiro"]).replace("RET-", "")) + 1
+            except (ValueError, TypeError):
+                num = query("SELECT COUNT(*) AS c FROM retirado", one=True)["c"] + 1
+        else:
+            num = 1
+        new_id = f"RET-{num:04d}"
+
+        fr_formatted = fecha_retiro
+        if "-" in fecha_retiro:
+            parts = fecha_retiro.split("-")
+            fr_formatted = f"{parts[2]}/{parts[1]}/{parts[0]}"
+
+        execute(
+            "INSERT INTO retirado (id_retiro, id_cedula, apellidos_nombre, departamento, "
+            "area, id_perfil_ocupacional, fecha_ingreso, fecha_retiro, dias_laborados, "
+            "tipo_retiro, motivo) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (new_id, emp["id_cedula"], emp["apellidos_nombre"], emp["departamento"],
+             emp["area"], emp.get("id_perfil_ocupacional"), emp["fecha_ingreso"],
+             fr_formatted, int(dias_laborados) if dias_laborados else None,
+             tipo_retiro, motivo or None),
+        )
+        execute("UPDATE empleado SET estado = 'INACTIVO' WHERE id_cedula = %s", (id,))
+        flash(f"Retiro registrado. Empleado {emp['apellidos_nombre']} marcado como INACTIVO", "success")
+        return redirect(url_for("detalle_empleado", id=id))
+
+    motivos = query("SELECT tipo_retiro FROM motivo_retiro ORDER BY tipo_retiro")
+    return render_template(
+        "retirar_form.html", active_page="Personal Activo",
+        emp=emp, motivos=motivos,
+        back_url=url_for("detalle_empleado", id=id),
+    )
+
+
+# ── CRUD HIJOS ───────────────────────────────────────────────
+
+@app.route("/hijo/nuevo", methods=["POST"])
+@login_required
+@role_required("WRITE")
+def crear_hijo():
+    cedula = request.form.get("id_cedula", "").strip()
+    nombre = request.form.get("apellidos_nombre", "").strip().upper()
+    if not cedula or not nombre:
+        flash("Cédula del padre y nombre del hijo son obligatorios", "error")
+        return redirect(url_for("detalle_empleado", id=cedula))
+
+    last = query("SELECT id_hijo FROM hijo ORDER BY id_hijo DESC LIMIT 1", one=True)
+    if last:
+        try:
+            num = int(str(last["id_hijo"]).replace("H-", "")) + 1
+        except (ValueError, TypeError):
+            num = query("SELECT COUNT(*) AS c FROM hijo", one=True)["c"] + 1
+    else:
+        num = 1
+    new_id = f"H-{num:04d}"
+
+    execute(
+        "INSERT INTO hijo (id_hijo, identificacion_hijo, id_cedula, apellidos_nombre, "
+        "fecha_nacimiento, sexo, estado) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        (new_id,
+         request.form.get("identificacion_hijo", "").strip() or None,
+         cedula, nombre,
+         request.form.get("fecha_nacimiento", "").strip() or None,
+         request.form.get("sexo", "").strip() or None,
+         request.form.get("estado", "ACTIVO").strip()),
+    )
+    flash(f"Hijo {nombre} agregado exitosamente", "success")
+    return redirect(url_for("detalle_empleado", id=cedula))
+
+
+@app.route("/hijo/<id>/editar", methods=["POST"])
+@login_required
+@role_required("WRITE")
+def editar_hijo(id):
+    cedula = request.form.get("id_cedula", "").strip()
+    nombre = request.form.get("apellidos_nombre", "").strip().upper()
+    execute(
+        "UPDATE hijo SET identificacion_hijo=%s, apellidos_nombre=%s, "
+        "fecha_nacimiento=%s, sexo=%s, estado=%s WHERE id_hijo=%s",
+        (request.form.get("identificacion_hijo", "").strip() or None,
+         nombre,
+         request.form.get("fecha_nacimiento", "").strip() or None,
+         request.form.get("sexo", "").strip() or None,
+         request.form.get("estado", "ACTIVO").strip(),
+         id),
+    )
+    flash(f"Hijo {nombre} actualizado", "success")
+    return redirect(url_for("detalle_empleado", id=cedula))
+
+
+@app.route("/hijo/<id>/eliminar")
+@login_required
+@role_required("ALL")
+def eliminar_hijo(id):
+    redirect_cedula = request.args.get("redirect_cedula", "")
+    execute("DELETE FROM hijo WHERE id_hijo = %s", (id,))
+    flash("Hijo eliminado", "success")
+    if redirect_cedula:
+        return redirect(url_for("detalle_empleado", id=redirect_cedula))
+    return redirect(url_for("hijos_activos"))
+
+
+# ── CRUD RETIRADOS ───────────────────────────────────────────
+
+@app.route("/retirado/<id>/eliminar")
+@login_required
+@role_required("ALL")
+def eliminar_retirado(id):
+    redirect_cedula = request.args.get("redirect_cedula", "")
+    execute("DELETE FROM retirado WHERE id_retiro = %s", (id,))
+    flash("Registro de retiro eliminado", "success")
+    if redirect_cedula:
+        return redirect(url_for("detalle_empleado", id=redirect_cedula))
+    return redirect(url_for("retiro_personal"))
+
+
+# ── PERSONAL INACTIVO ────────────────────────────────────────
+
+@app.route("/personal-inactivo")
+@login_required
+@module_required("personal_inactivo")
+def personal_inactivo():
+    rows = query(
+        "SELECT id_cedula, apellidos_nombre, tipo_documento, departamento, "
+        "area, sexo, fecha_ingreso, celular, eps, estado "
+        "FROM empleado WHERE estado = 'INACTIVO' ORDER BY apellidos_nombre"
+    )
+    sex_m = sum(1 for r in rows if r.get("sexo") == "M")
+    sex_f = sum(1 for r in rows if r.get("sexo") == "F")
+    columns = [
+        {"key": "id_cedula",        "label": "Cédula"},
+        {"key": "apellidos_nombre", "label": "Nombre"},
+        {"key": "tipo_documento",   "label": "Tipo Doc"},
+        {"key": "departamento",     "label": "Departamento", "type": "dept"},
+        {"key": "area",             "label": "Área"},
+        {"key": "sexo",             "label": "Sexo", "type": "sex"},
+        {"key": "fecha_ingreso",    "label": "Fecha Ingreso"},
+        {"key": "celular",          "label": "Celular"},
+        {"key": "eps",              "label": "EPS"},
+    ]
+    stats = [
+        {"value": len(rows), "label": "Total Inactivos", "icon": "person_off",  "color": "red"},
+        {"value": sex_m,     "label": "Masculino",       "icon": "male",        "color": "blue"},
+        {"value": sex_f,     "label": "Femenino",        "icon": "female",      "color": "purple"},
+    ]
+    filter_columns = [
+        {"index": 3, "label": "Departamento"},
+        {"index": 5, "label": "Sexo"},
+    ]
+    return render_template(
+        "data_table.html", active_page="Personal Inactivo",
+        rows=rows, columns=columns, stats=stats,
+        detail_route="detalle_empleado", pk="id_cedula",
+        export_key="personal_inactivo", filter_columns=filter_columns,
+    )
+
+
+# ── HIJOS ACTIVOS ────────────────────────────────────────────
+
+@app.route("/hijos-activos")
+@login_required
+@module_required("familia")
+def hijos_activos():
+    rows = query(
+        "SELECT id_hijo, identificacion_hijo, id_cedula, apellidos_nombre, "
+        "fecha_nacimiento, sexo, estado "
+        "FROM hijo WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre"
+    )
+    sex_m = sum(1 for r in rows if r.get("sexo") == "M")
+    sex_f = sum(1 for r in rows if r.get("sexo") == "F")
+    padres = len(set(r["id_cedula"] for r in rows if r.get("id_cedula")))
+    columns = [
+        {"key": "id_cedula",           "label": "Cédula Padre"},
+        {"key": "apellidos_nombre",    "label": "Nombre Hijo"},
+        {"key": "identificacion_hijo", "label": "Identificación"},
+        {"key": "fecha_nacimiento",    "label": "Fecha Nacimiento"},
+        {"key": "sexo",                "label": "Sexo", "type": "sex"},
+    ]
+    stats = [
+        {"value": len(rows), "label": "Hijos Activos",    "icon": "child_care",      "color": "green"},
+        {"value": sex_m,     "label": "Niños",            "icon": "male",            "color": "blue"},
+        {"value": sex_f,     "label": "Niñas",            "icon": "female",          "color": "purple"},
+        {"value": padres,    "label": "Empleados Padres", "icon": "family_restroom", "color": "orange"},
+    ]
+    return render_template(
+        "data_table.html", active_page="Hijos Activos",
+        rows=rows, columns=columns, stats=stats,
+        export_key="hijos_activos",
+    )
+
+
+# ── HIJOS INACTIVOS ──────────────────────────────────────────
+
+@app.route("/hijos-inactivos")
+@login_required
+@module_required("familia")
+def hijos_inactivos():
+    rows = query(
+        "SELECT id_hijo, identificacion_hijo, id_cedula, apellidos_nombre, "
+        "fecha_nacimiento, sexo, estado "
+        "FROM hijo WHERE estado = 'INACTIVO' ORDER BY apellidos_nombre"
+    )
+    sex_m = sum(1 for r in rows if r.get("sexo") == "M")
+    sex_f = sum(1 for r in rows if r.get("sexo") == "F")
+    columns = [
+        {"key": "id_cedula",           "label": "Cédula Padre"},
+        {"key": "apellidos_nombre",    "label": "Nombre Hijo"},
+        {"key": "identificacion_hijo", "label": "Identificación"},
+        {"key": "fecha_nacimiento",    "label": "Fecha Nacimiento"},
+        {"key": "sexo",                "label": "Sexo", "type": "sex"},
+    ]
+    stats = [
+        {"value": len(rows), "label": "Hijos Inactivos",  "icon": "child_friendly", "color": "orange"},
+        {"value": sex_m,     "label": "Niños",            "icon": "male",           "color": "blue"},
+        {"value": sex_f,     "label": "Niñas",            "icon": "female",         "color": "purple"},
+    ]
+    return render_template(
+        "data_table.html", active_page="Hijos Inactivos",
+        rows=rows, columns=columns, stats=stats,
+        export_key="hijos_inactivos",
+    )
+
+
+# ── RETIRO DE PERSONAL ───────────────────────────────────────
+
+@app.route("/retiro-personal")
+@login_required
+@module_required("retiro")
+def retiro_personal():
+    rows = query(
+        "SELECT id_retiro, id_cedula, apellidos_nombre, departamento, area, "
+        "fecha_ingreso, fecha_retiro, dias_laborados, tipo_retiro "
+        "FROM retirado ORDER BY fecha_retiro DESC"
+    )
+    from collections import Counter
+    tipo_counts = Counter(r.get("tipo_retiro", "") for r in rows)
+    renuncia = tipo_counts.get("RENUNCIA VOLUNTARIA", 0) + tipo_counts.get("RENUNCIA", 0)
+    terminacion = tipo_counts.get("TERMINACION DEL CONTRATO", 0) + tipo_counts.get("TERMINACION", 0)
+    pendiente = tipo_counts.get("PENDIENTE", 0)
+    columns = [
+        {"key": "id_cedula",        "label": "Cédula"},
+        {"key": "apellidos_nombre", "label": "Nombre"},
+        {"key": "departamento",     "label": "Departamento", "type": "dept"},
+        {"key": "area",             "label": "Área"},
+        {"key": "fecha_ingreso",    "label": "Ingreso"},
+        {"key": "fecha_retiro",     "label": "Retiro"},
+        {"key": "dias_laborados",   "label": "Días", "type": "number"},
+        {"key": "tipo_retiro",      "label": "Tipo Retiro", "type": "retiro"},
+    ]
+    stats = [
+        {"value": len(rows),  "label": "Total Retirados", "icon": "person_remove", "color": "red"},
+        {"value": renuncia,   "label": "Renuncias",       "icon": "directions_walk", "color": "orange"},
+        {"value": terminacion,"label": "Terminaciones",   "icon": "gavel",         "color": "blue"},
+        {"value": pendiente,  "label": "Pendientes",      "icon": "pending",       "color": "purple"},
+    ]
+    filter_columns = [
+        {"index": 2, "label": "Departamento"},
+        {"index": 7, "label": "Tipo Retiro"},
+    ]
+    return render_template(
+        "data_table.html", active_page="Retiro de Personal",
+        rows=rows, columns=columns, stats=stats,
+        export_key="retiro_personal", filter_columns=filter_columns,
+    )
+
+
+# ── VIEW ÁREAS (módulo completo) ──────────────────────────────
+
+@app.route("/areas")
+@login_required
+@module_required("organizacion")
+def areas():
+    area_rows = query(
+        "SELECT a.id, a.nombre AS area, a.presupuestados, d.id AS depto_id, d.nombre AS departamento "
+        "FROM area a JOIN departamento d ON a.departamento_id = d.id "
+        "ORDER BY d.nombre, a.nombre"
+    )
+    emp_counts = query(
+        "SELECT area, COUNT(*) AS cnt FROM empleado WHERE estado = 'ACTIVO' GROUP BY area"
+    )
+    count_map = {r["area"]: int(r["cnt"]) for r in emp_counts}
+
+    from collections import OrderedDict
+    grouped = OrderedDict()
+    total_pres = total_ejec = 0
+    for a in area_rows:
+        depto = a["departamento"]
+        if depto not in grouped:
+            grouped[depto] = {"areas": [], "pres": 0, "ejec": 0, "depto_id": a.get("depto_id", 0)}
+        pres = int(a["presupuestados"]) if a["presupuestados"] else 0
+        ejec = count_map.get(a["area"], 0)
+        pend = pres - ejec
+        grouped[depto]["areas"].append({
+            "id": a["id"],
+            "area": a["area"],
+            "presupuestados": pres if pres else "",
+            "ejecutados": ejec,
+            "pendientes": pend,
+        })
+        grouped[depto]["pres"] += pres
+        grouped[depto]["ejec"] += ejec
+        total_pres += pres
+        total_ejec += ejec
+
+    return render_template("areas_view.html", active_page="Area",
+                           grouped=grouped, total=len(area_rows),
+                           total_pres=total_pres, total_ejec=total_ejec)
+
+
+@app.route("/areas/<int:area_id>")
+@login_required
+def area_detail(area_id):
+    area = query(
+        "SELECT a.id, a.nombre AS area, a.presupuestados, d.nombre AS departamento "
+        "FROM area a JOIN departamento d ON a.departamento_id = d.id WHERE a.id = %s",
+        (area_id,), one=True,
+    )
+    if not area:
+        flash("Área no encontrada", "error")
+        return redirect(url_for("areas"))
+
+    pres = int(area["presupuestados"]) if area["presupuestados"] else 0
+
+    perfiles = query(
+        "SELECT p.id_perfil, p.perfil_ocupacional, d.nombre AS departamento, a.nombre AS area "
+        "FROM perfil_ocupacional p "
+        "JOIN area a ON p.area_id = a.id "
+        "JOIN departamento d ON a.departamento_id = d.id "
+        "WHERE a.id = %s ORDER BY p.perfil_ocupacional",
+        (area_id,),
+    )
+    empleados = query(
+        "SELECT id_cedula, apellidos_nombre, lugar_expedicion "
+        "FROM empleado WHERE area = %s AND estado = 'ACTIVO' ORDER BY apellidos_nombre",
+        (area["area"],),
+    )
+    retirados = query(
+        "SELECT id_cedula, id_retiro, apellidos_nombre "
+        "FROM retirado WHERE area = %s ORDER BY apellidos_nombre",
+        (area["area"],),
+    )
+
+    ejec = len(empleados)
+    pend = pres - ejec
+
+    return render_template(
+        "area_detail.html", active_page="Area",
+        area=area, presupuestados=pres, ejecutados=ejec, pendientes=pend,
+        perfiles=perfiles, empleados=empleados, retirados=retirados,
+    )
+
+
+@app.route("/areas/<int:area_id>/perfil/<perfil_id>")
+@login_required
+def perfil_detail(area_id, perfil_id):
+    perfil = query(
+        "SELECT p.id_perfil, p.perfil_ocupacional, p.presupuestados, "
+        "d.nombre AS departamento, a.nombre AS area, a.id AS area_id "
+        "FROM perfil_ocupacional p "
+        "JOIN area a ON p.area_id = a.id "
+        "JOIN departamento d ON a.departamento_id = d.id "
+        "WHERE p.id_perfil = %s",
+        (str(perfil_id),), one=True,
+    )
+    if not perfil:
+        flash("Perfil no encontrado", "error")
+        return redirect(url_for("area_detail", area_id=area_id))
+
+    empleados = query(
+        "SELECT id_cedula, apellidos_nombre, lugar_expedicion "
+        "FROM empleado WHERE area = %s AND id_perfil_ocupacional = %s AND estado = 'ACTIVO' "
+        "ORDER BY apellidos_nombre",
+        (perfil["area"], str(perfil_id)),
+    )
+    retirados = query(
+        "SELECT id_cedula, id_retiro, apellidos_nombre "
+        "FROM retirado WHERE area = %s AND id_perfil_ocupacional = %s "
+        "ORDER BY apellidos_nombre",
+        (perfil["area"], str(perfil_id)),
+    )
+
+    return render_template(
+        "perfil_detail.html", active_page="Area",
+        perfil=perfil, area_id=area_id,
+        empleados=empleados, retirados=retirados,
+    )
+
+
+@app.route("/areas/<int:area_id>/empleado/<cedula>")
+@login_required
+def area_empleado_detail(area_id, cedula):
+    emp = query("SELECT * FROM empleado WHERE id_cedula = %s", (cedula,), one=True)
+    if not emp:
+        flash("Empleado no encontrado", "error")
+        return redirect(url_for("area_detail", area_id=area_id))
+
+    area = query("SELECT a.nombre AS area FROM area a WHERE a.id = %s", (area_id,), one=True)
+    area_nombre = area["area"] if area else ""
+
+    hijos = query("SELECT * FROM hijo WHERE id_cedula = %s ORDER BY fecha_nacimiento", (cedula,))
+    retirados = query(
+        "SELECT id_cedula, id_retiro, apellidos_nombre, departamento, area, "
+        "id_perfil_ocupacional, fecha_ingreso, fecha_retiro, dias_laborados, tipo_retiro "
+        "FROM retirado WHERE id_cedula = %s", (cedula,),
+    )
+
+    perfil_nombre = ""
+    if emp.get("id_perfil_ocupacional"):
+        p = query(
+            "SELECT perfil_ocupacional FROM perfil_ocupacional WHERE id_perfil = %s",
+            (str(emp["id_perfil_ocupacional"]),), one=True,
+        )
+        if p:
+            perfil_nombre = p["perfil_ocupacional"]
+
+    bd = parse_fecha(emp.get("fecha_nacimiento", ""))
+    fi = parse_fecha(emp.get("fecha_ingreso", ""))
+    today = date.today()
+    mes_cumple = bd.month if bd else ""
+    cumple_str = ""
+    if bd:
+        try:
+            cumple_str = date(today.year, bd.month, bd.day).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+    aniv_str = ""
+    antiguedad = ""
+    if fi:
+        try:
+            aniv_str = date(today.year, fi.month, fi.day).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+        antiguedad = today.year - fi.year
+
+    return render_template(
+        "area_empleado_detail.html", active_page="Area",
+        emp=emp, area_id=area_id, area_nombre=area_nombre,
+        perfil_nombre=perfil_nombre,
+        hijos=hijos, retirados=retirados,
+        mes_cumple=mes_cumple, cumple_str=cumple_str,
+        aniv_str=aniv_str, antiguedad=antiguedad,
+    )
+
+
+# ── DEPARTAMENTOS ─────────────────────────────────────────────
+
+@app.route("/departamentos")
+@login_required
+@module_required("organizacion")
+def departamentos():
+    rows = query("SELECT * FROM departamento ORDER BY nombre")
+    total_pres = sum(int(r["presupuestados"] or 0) for r in rows)
+    columns = [
+        {"key": "nombre",         "label": "Departamento"},
+        {"key": "presupuestados", "label": "Presupuestados", "type": "number"},
+    ]
+    stats = [
+        {"value": len(rows),   "label": "Departamentos",    "icon": "business",      "color": "green"},
+        {"value": total_pres,  "label": "Presupuestados",   "icon": "group_add",     "color": "blue"},
+    ]
+    return render_template(
+        "departamentos.html", active_page="Departamentos",
+        rows=rows, columns=columns, stats=stats,
+        export_key="departamentos",
+    )
+
+
+# ── PERFIL OCUPACIONAL ────────────────────────────────────────
+
+@app.route("/perfil-ocupacional")
+@login_required
+@module_required("organizacion")
+def perfil_ocupacional():
+    rows = query(
+        "SELECT p.id_perfil, d.id AS departamento_id, d.nombre AS departamento, "
+        "a.id AS area_id, a.nombre AS area, p.perfil_ocupacional, p.presupuestados "
+        "FROM perfil_ocupacional p "
+        "JOIN area a ON p.area_id = a.id "
+        "JOIN departamento d ON a.departamento_id = d.id "
+        "ORDER BY d.nombre, a.nombre, p.perfil_ocupacional"
+    )
+    total_pres = sum(int(r["presupuestados"] or 0) for r in rows)
+    deptos = len(set(r["departamento"] for r in rows if r.get("departamento")))
+    columns = [
+        {"key": "departamento",      "label": "Departamento", "type": "dept"},
+        {"key": "area",              "label": "Área"},
+        {"key": "perfil_ocupacional","label": "Perfil Ocupacional"},
+        {"key": "presupuestados",    "label": "Presupuestados", "type": "number"},
+    ]
+    stats = [
+        {"value": len(rows),  "label": "Perfiles",         "icon": "badge",     "color": "green"},
+        {"value": deptos,     "label": "Departamentos",    "icon": "business",  "color": "blue"},
+        {"value": total_pres, "label": "Presupuestados",   "icon": "group_add", "color": "orange"},
+    ]
+    filter_columns = [
+        {"index": 0, "label": "Departamento"},
+        {"index": 1, "label": "Área"},
+    ]
+    departamentos_list = query("SELECT id, nombre FROM departamento ORDER BY nombre")
+    areas_list = query(
+        "SELECT a.id, a.nombre, a.departamento_id FROM area a ORDER BY a.nombre"
+    )
+    return render_template(
+        "perfil_ocupacional.html", active_page="Perfil Ocupacional",
+        rows=rows, columns=columns, stats=stats,
+        export_key="perfil_ocupacional", filter_columns=filter_columns,
+        departamentos_list=departamentos_list, areas_list=areas_list,
+    )
+
+
+# ── VIEW EPS (módulo completo) ────────────────────────────────
+
+@app.route("/view-eps")
+@login_required
+@module_required("eps")
+def view_eps():
+    rows = query(
+        "SELECT eps, COUNT(*) AS cnt "
+        "FROM empleado WHERE eps IS NOT NULL AND eps != '' "
+        "GROUP BY eps ORDER BY eps"
+    )
+    eps_list = []
+    for r in rows:
+        eps_list.append({
+            "eps": r["eps"],
+            "related": f"Related DBases ({r['cnt']})",
+            "cnt": int(r["cnt"]),
+        })
+    return render_template("eps_view.html", active_page="EPS", eps_list=eps_list)
+
+
+@app.route("/view-eps/add", methods=["POST"])
+@login_required
+def eps_add():
+    nombre = (request.form.get("nombre") or "").strip().upper()
+    if not nombre:
+        flash("El nombre de la EPS es obligatorio", "error")
+        return redirect(url_for("view_eps"))
+    existing = query("SELECT id FROM eps WHERE nombre = %s", (nombre,), one=True)
+    if existing:
+        flash(f"La EPS '{nombre}' ya existe", "error")
+        return redirect(url_for("view_eps"))
+    execute("INSERT INTO eps (nombre) VALUES (%s)", (nombre,))
+    flash(f"EPS '{nombre}' creada exitosamente", "success")
+    return redirect(url_for("view_eps"))
+
+
+@app.route("/view-eps/<path:eps_name>")
+@login_required
+@module_required("eps")
+def eps_detail(eps_name):
+    empleados = query(
+        "SELECT id_cedula, apellidos_nombre, lugar_expedicion, fecha_expedicion "
+        "FROM empleado WHERE eps = %s ORDER BY apellidos_nombre",
+        (eps_name,),
+    )
+    return render_template(
+        "eps_detail.html", active_page="EPS",
+        eps_name=eps_name, empleados=empleados,
+    )
+
+
+@app.route("/view-eps/<path:eps_name>/inline")
+@login_required
+@module_required("eps")
+def eps_inline(eps_name):
+    empleados = query(
+        "SELECT * FROM empleado WHERE eps = %s ORDER BY apellidos_nombre",
+        (eps_name,),
+    )
+    empleados = enrich_empleados(empleados)
+    return render_template(
+        "inline_view.html", active_page="EPS",
+        context_label="EPS", context_name=eps_name,
+        back_url=url_for("eps_detail", eps_name=eps_name),
+        list_url=url_for("view_eps"),
+        empleados=empleados, columns=INLINE_COLUMNS,
+        export_url=url_for("eps_export", eps_name=eps_name),
+        detail_route="eps_empleado_detail",
+        detail_kwargs={"eps_name": eps_name},
+    )
+
+
+@app.route("/view-eps/<path:eps_name>/export")
+@login_required
+def eps_export(eps_name):
+    empleados = query(
+        "SELECT * FROM empleado WHERE eps = %s ORDER BY apellidos_nombre",
+        (eps_name,),
+    )
+    empleados = enrich_empleados(empleados)
+    return export_excel_response(empleados, f"EPS_{eps_name}")
+
+
+@app.route("/view-eps/<path:eps_name>/empleado/<cedula>")
+@login_required
+def eps_empleado_detail(eps_name, cedula):
+    emp = query("SELECT * FROM empleado WHERE id_cedula = %s", (cedula,), one=True)
+    if not emp:
+        flash("Empleado no encontrado", "error")
+        return redirect(url_for("eps_detail", eps_name=eps_name))
+
+    perfil_nombre = ""
+    if emp.get("id_perfil_ocupacional"):
+        p = query(
+            "SELECT perfil_ocupacional FROM perfil_ocupacional WHERE id_perfil = %s",
+            (str(emp["id_perfil_ocupacional"]),), one=True,
+        )
+        if p:
+            perfil_nombre = p["perfil_ocupacional"]
+
+    hijos = query("SELECT * FROM hijo WHERE id_cedula = %s ORDER BY fecha_nacimiento", (cedula,))
+    retirados = query(
+        "SELECT id_cedula, id_retiro, apellidos_nombre, departamento, area, "
+        "id_perfil_ocupacional, fecha_ingreso, fecha_retiro, dias_laborados, tipo_retiro "
+        "FROM retirado WHERE id_cedula = %s", (cedula,),
+    )
+
+    bd = parse_fecha(emp.get("fecha_nacimiento", ""))
+    fi = parse_fecha(emp.get("fecha_ingreso", ""))
+    today = date.today()
+    mes_cumple = bd.month if bd else ""
+    cumple_str = ""
+    if bd:
+        try:
+            cumple_str = date(today.year, bd.month, bd.day).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+    aniv_str = ""
+    antiguedad = ""
+    if fi:
+        try:
+            aniv_str = date(today.year, fi.month, fi.day).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+        antiguedad = today.year - fi.year
+
+    return render_template(
+        "eps_empleado_detail.html", active_page="EPS",
+        emp=emp, eps_name=eps_name, perfil_nombre=perfil_nombre,
+        hijos=hijos, retirados=retirados,
+        mes_cumple=mes_cumple, cumple_str=cumple_str,
+        aniv_str=aniv_str, antiguedad=antiguedad,
+    )
+
+
+@app.route("/view-eps/<path:eps_name>/empleado/<cedula>/retirado/<retiro_id>")
+@login_required
+def eps_retirado_detail(eps_name, cedula, retiro_id):
+    ret = query(
+        "SELECT * FROM retirado WHERE id_retiro = %s", (retiro_id,), one=True,
+    )
+    if not ret:
+        flash("Registro de retiro no encontrado", "error")
+        return redirect(url_for("eps_empleado_detail", eps_name=eps_name, cedula=cedula))
+
+    emp_nombre = ""
+    emp = query("SELECT apellidos_nombre FROM empleado WHERE id_cedula = %s", (cedula,), one=True)
+    if emp:
+        emp_nombre = emp["apellidos_nombre"]
+
+    return render_template(
+        "eps_retirado_detail.html", active_page="EPS",
+        ret=ret, eps_name=eps_name, cedula=cedula, emp_nombre=emp_nombre,
+    )
+
+
+# ── VIEW FONDO DE PENSIONES (módulo completo) ────────────────
+
+@app.route("/view-fondos")
+@login_required
+@module_required("fondos")
+def view_fondos():
+    rows = query(
+        "SELECT fondo_pensiones, COUNT(*) AS cnt "
+        "FROM empleado WHERE fondo_pensiones IS NOT NULL AND fondo_pensiones != '' "
+        "GROUP BY fondo_pensiones ORDER BY fondo_pensiones"
+    )
+    fondos_list = []
+    for r in rows:
+        fondos_list.append({
+            "fondo": r["fondo_pensiones"],
+            "cnt": int(r["cnt"]),
+        })
+    return render_template("fondos_view.html", active_page="Fondo de Pensiones",
+                           fondos_list=fondos_list)
+
+
+@app.route("/view-fondos/add", methods=["POST"])
+@login_required
+def fondos_add():
+    nombre = (request.form.get("nombre") or "").strip().upper()
+    if not nombre:
+        flash("El nombre del Fondo es obligatorio", "error")
+        return redirect(url_for("view_fondos"))
+    existing = query("SELECT id FROM fondo_pensiones WHERE nombre = %s", (nombre,), one=True)
+    if existing:
+        flash(f"El Fondo '{nombre}' ya existe", "error")
+        return redirect(url_for("view_fondos"))
+    execute("INSERT INTO fondo_pensiones (nombre) VALUES (%s)", (nombre,))
+    flash(f"Fondo '{nombre}' creado exitosamente", "success")
+    return redirect(url_for("view_fondos"))
+
+
+@app.route("/view-fondos/<path:fondo_name>")
+@login_required
+@module_required("fondos")
+def fondo_detail(fondo_name):
+    empleados = query(
+        "SELECT id_cedula, apellidos_nombre, lugar_expedicion, fecha_expedicion "
+        "FROM empleado WHERE fondo_pensiones = %s ORDER BY apellidos_nombre",
+        (fondo_name,),
+    )
+    return render_template(
+        "fondo_detail.html", active_page="Fondo de Pensiones",
+        fondo_name=fondo_name, empleados=empleados,
+    )
+
+
+@app.route("/view-fondos/<path:fondo_name>/inline")
+@login_required
+@module_required("fondos")
+def fondo_inline(fondo_name):
+    empleados = query(
+        "SELECT * FROM empleado WHERE fondo_pensiones = %s ORDER BY apellidos_nombre",
+        (fondo_name,),
+    )
+    empleados = enrich_empleados(empleados)
+    return render_template(
+        "inline_view.html", active_page="Fondo de Pensiones",
+        context_label="Fondo de Pensiones", context_name=fondo_name,
+        back_url=url_for("fondo_detail", fondo_name=fondo_name),
+        list_url=url_for("view_fondos"),
+        empleados=empleados, columns=INLINE_COLUMNS,
+        export_url=url_for("fondo_export", fondo_name=fondo_name),
+        detail_route="fondo_empleado_detail",
+        detail_kwargs={"fondo_name": fondo_name},
+    )
+
+
+@app.route("/view-fondos/<path:fondo_name>/export")
+@login_required
+def fondo_export(fondo_name):
+    empleados = query(
+        "SELECT * FROM empleado WHERE fondo_pensiones = %s ORDER BY apellidos_nombre",
+        (fondo_name,),
+    )
+    empleados = enrich_empleados(empleados)
+    return export_excel_response(empleados, f"Fondo_{fondo_name}")
+
+
+@app.route("/view-fondos/<path:fondo_name>/empleado/<cedula>")
+@login_required
+def fondo_empleado_detail(fondo_name, cedula):
+    emp = query("SELECT * FROM empleado WHERE id_cedula = %s", (cedula,), one=True)
+    if not emp:
+        flash("Empleado no encontrado", "error")
+        return redirect(url_for("fondo_detail", fondo_name=fondo_name))
+
+    perfil_nombre = ""
+    if emp.get("id_perfil_ocupacional"):
+        p = query(
+            "SELECT perfil_ocupacional FROM perfil_ocupacional WHERE id_perfil = %s",
+            (str(emp["id_perfil_ocupacional"]),), one=True,
+        )
+        if p:
+            perfil_nombre = p["perfil_ocupacional"]
+
+    hijos = query("SELECT * FROM hijo WHERE id_cedula = %s ORDER BY fecha_nacimiento", (cedula,))
+    retirados = query(
+        "SELECT id_cedula, id_retiro, apellidos_nombre, departamento, area, "
+        "id_perfil_ocupacional, fecha_ingreso, fecha_retiro, dias_laborados, tipo_retiro "
+        "FROM retirado WHERE id_cedula = %s", (cedula,),
+    )
+
+    bd = parse_fecha(emp.get("fecha_nacimiento", ""))
+    fi = parse_fecha(emp.get("fecha_ingreso", ""))
+    today = date.today()
+    mes_cumple = bd.month if bd else ""
+    cumple_str = ""
+    if bd:
+        try:
+            cumple_str = date(today.year, bd.month, bd.day).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+    aniv_str = ""
+    antiguedad = ""
+    if fi:
+        try:
+            aniv_str = date(today.year, fi.month, fi.day).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+        antiguedad = today.year - fi.year
+
+    return render_template(
+        "fondo_empleado_detail.html", active_page="Fondo de Pensiones",
+        emp=emp, fondo_name=fondo_name, perfil_nombre=perfil_nombre,
+        hijos=hijos, retirados=retirados,
+        mes_cumple=mes_cumple, cumple_str=cumple_str,
+        aniv_str=aniv_str, antiguedad=antiguedad,
+    )
+
+
+@app.route("/view-fondos/<path:fondo_name>/empleado/<cedula>/retirado/<retiro_id>")
+@login_required
+def fondo_retirado_detail(fondo_name, cedula, retiro_id):
+    ret = query("SELECT * FROM retirado WHERE id_retiro = %s", (retiro_id,), one=True)
+    if not ret:
+        flash("Registro de retiro no encontrado", "error")
+        return redirect(url_for("fondo_empleado_detail", fondo_name=fondo_name, cedula=cedula))
+
+    emp_nombre = ""
+    emp = query("SELECT apellidos_nombre FROM empleado WHERE id_cedula = %s", (cedula,), one=True)
+    if emp:
+        emp_nombre = emp["apellidos_nombre"]
+
+    return render_template(
+        "fondo_retirado_detail.html", active_page="Fondo de Pensiones",
+        ret=ret, fondo_name=fondo_name, cedula=cedula, emp_nombre=emp_nombre,
+    )
+
+
+# ── REACTIVAR EMPLEADO ───────────────────────────────────────
+
+@app.route("/personal-activo/<id>/reactivar", methods=["POST"])
+@login_required
+@role_required("WRITE")
+def reactivar_empleado(id):
+    execute("UPDATE empleado SET estado = 'ACTIVO' WHERE id_cedula = %s", (id,))
+    flash("Empleado reactivado exitosamente", "success")
+    return redirect(url_for("detalle_empleado", id=id))
+
+
+# ── CRUD RETIRO (editar) ──────────────────────────────────────
+
+@app.route("/retirado/<id>/editar", methods=["GET", "POST"])
+@login_required
+@role_required("WRITE")
+def editar_retirado(id):
+    ret = query("SELECT * FROM retirado WHERE id_retiro = %s", (id,), one=True)
+    if not ret:
+        flash("Registro no encontrado", "error")
+        return redirect(url_for("retiro_personal"))
+    if request.method == "POST":
+        fecha_retiro = request.form.get("fecha_retiro", "").strip()
+        tipo_retiro = request.form.get("tipo_retiro", "").strip()
+        dias_laborados = request.form.get("dias_laborados", "").strip()
+        motivo = request.form.get("motivo", "").strip()
+        if "-" in fecha_retiro:
+            parts = fecha_retiro.split("-")
+            fecha_retiro = f"{parts[2]}/{parts[1]}/{parts[0]}"
+        execute(
+            "UPDATE retirado SET fecha_retiro=%s, tipo_retiro=%s, dias_laborados=%s, motivo=%s "
+            "WHERE id_retiro=%s",
+            (fecha_retiro or None,
+             tipo_retiro or None,
+             int(dias_laborados) if dias_laborados else None,
+             motivo or None,
+             id),
+        )
+        flash("Registro de retiro actualizado", "success")
+        redirect_cedula = request.form.get("redirect_cedula", "")
+        if redirect_cedula:
+            return redirect(url_for("detalle_empleado", id=redirect_cedula))
+        return redirect(url_for("retiro_personal"))
+    motivos = query("SELECT tipo_retiro FROM motivo_retiro ORDER BY tipo_retiro")
+    redirect_cedula = request.args.get("redirect_cedula", ret.get("id_cedula", ""))
+    return render_template(
+        "retirado_edit_form.html", active_page="Retiro de Personal",
+        ret=ret, motivos=motivos,
+        back_url=url_for("detalle_empleado", id=redirect_cedula) if redirect_cedula else url_for("retiro_personal"),
+        redirect_cedula=redirect_cedula,
+    )
+
+
+# ── API helpers para cascadas ────────────────────────────────
+
+@app.route("/api/areas-por-depto/<int:depto_id>")
+@login_required
+def api_areas_por_depto(depto_id):
+    rows = query(
+        "SELECT id, nombre FROM area WHERE departamento_id=%s ORDER BY nombre", (depto_id,)
+    )
+    return jsonify([{"id": r["id"], "nombre": r["nombre"]} for r in rows])
+
+
+# ── CRUD DEPARTAMENTOS ────────────────────────────────────────
+
+@app.route("/departamentos/nuevo", methods=["POST"])
+@login_required
+@role_required("ALL")
+def departamento_nuevo():
+    nombre = (request.form.get("nombre") or "").strip().upper()
+    presupuestados = request.form.get("presupuestados", "").strip()
+    if not nombre:
+        flash("El nombre del departamento es obligatorio", "error")
+        return redirect(url_for("departamentos"))
+    existing = query("SELECT id FROM departamento WHERE nombre = %s", (nombre,), one=True)
+    if existing:
+        flash(f"Ya existe el departamento '{nombre}'", "error")
+        return redirect(url_for("departamentos"))
+    execute(
+        "INSERT INTO departamento (nombre, presupuestados) VALUES (%s, %s)",
+        (nombre, int(presupuestados) if presupuestados else None),
+    )
+    flash(f"Departamento '{nombre}' creado", "success")
+    return redirect(url_for("departamentos"))
+
+
+@app.route("/departamentos/<int:id>/editar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def departamento_editar(id):
+    nombre = (request.form.get("nombre") or "").strip().upper()
+    presupuestados = request.form.get("presupuestados", "").strip()
+    execute(
+        "UPDATE departamento SET nombre=%s, presupuestados=%s WHERE id=%s",
+        (nombre, int(presupuestados) if presupuestados else None, id),
+    )
+    flash("Departamento actualizado", "success")
+    return redirect(url_for("departamentos"))
+
+
+@app.route("/departamentos/<int:id>/eliminar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def departamento_eliminar(id):
+    try:
+        execute("DELETE FROM departamento WHERE id = %s", (id,))
+        flash("Departamento eliminado", "success")
+    except Exception:
+        flash("No se puede eliminar: tiene áreas asociadas", "error")
+    return redirect(url_for("departamentos"))
+
+
+# ── CRUD ÁREAS ────────────────────────────────────────────────
+
+@app.route("/areas/nueva", methods=["POST"])
+@login_required
+@role_required("ALL")
+def area_nueva():
+    nombre = (request.form.get("nombre") or "").strip().upper()
+    departamento_id = request.form.get("departamento_id", "").strip()
+    presupuestados = request.form.get("presupuestados", "").strip()
+    if not nombre or not departamento_id:
+        flash("Nombre y Departamento son obligatorios", "error")
+        return redirect(url_for("areas"))
+    execute(
+        "INSERT INTO area (nombre, departamento_id, presupuestados) VALUES (%s, %s, %s)",
+        (nombre, int(departamento_id), int(presupuestados) if presupuestados else None),
+    )
+    flash(f"Área '{nombre}' creada", "success")
+    return redirect(url_for("areas"))
+
+
+@app.route("/areas/<int:id>/editar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def area_editar(id):
+    nombre = (request.form.get("nombre") or "").strip().upper()
+    departamento_id = request.form.get("departamento_id", "").strip()
+    presupuestados = request.form.get("presupuestados", "").strip()
+    execute(
+        "UPDATE area SET nombre=%s, departamento_id=%s, presupuestados=%s WHERE id=%s",
+        (nombre, int(departamento_id), int(presupuestados) if presupuestados else None, id),
+    )
+    flash("Área actualizada", "success")
+    return redirect(url_for("areas"))
+
+
+@app.route("/areas/<int:id>/eliminar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def area_eliminar(id):
+    try:
+        execute("DELETE FROM area WHERE id = %s", (id,))
+        flash("Área eliminada", "success")
+    except Exception:
+        flash("No se puede eliminar: tiene perfiles o empleados asociados", "error")
+    return redirect(url_for("areas"))
+
+
+# ── CRUD PERFIL OCUPACIONAL ───────────────────────────────────
+
+@app.route("/perfil/nuevo", methods=["POST"])
+@login_required
+@role_required("ALL")
+def perfil_nuevo():
+    import uuid
+    perfil = (request.form.get("perfil_ocupacional") or "").strip().upper()
+    area_id = request.form.get("area_id", "").strip()
+    presupuestados = request.form.get("presupuestados", "").strip()
+    if not perfil or not area_id:
+        flash("Perfil y Área son obligatorios", "error")
+        return redirect(url_for("perfil_ocupacional"))
+    new_id = uuid.uuid4().hex[:8]
+    execute(
+        "INSERT INTO perfil_ocupacional (id_perfil, area_id, perfil_ocupacional, presupuestados) "
+        "VALUES (%s, %s, %s, %s)",
+        (new_id, int(area_id), perfil, int(presupuestados) if presupuestados else None),
+    )
+    flash(f"Perfil '{perfil}' creado", "success")
+    return redirect(url_for("perfil_ocupacional"))
+
+
+@app.route("/perfil/<id>/editar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def perfil_editar(id):
+    perfil = (request.form.get("perfil_ocupacional") or "").strip().upper()
+    area_id = request.form.get("area_id", "").strip()
+    presupuestados = request.form.get("presupuestados", "").strip()
+    execute(
+        "UPDATE perfil_ocupacional SET perfil_ocupacional=%s, area_id=%s, presupuestados=%s "
+        "WHERE id_perfil=%s",
+        (perfil, int(area_id), int(presupuestados) if presupuestados else None, id),
+    )
+    flash("Perfil actualizado", "success")
+    return redirect(url_for("perfil_ocupacional"))
+
+
+@app.route("/perfil/<id>/eliminar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def perfil_eliminar(id):
+    execute("DELETE FROM perfil_ocupacional WHERE id_perfil = %s", (id,))
+    flash("Perfil eliminado", "success")
+    return redirect(url_for("perfil_ocupacional"))
+
+
+# ── CRUD EPS ──────────────────────────────────────────────────
+
+@app.route("/view-eps/<path:eps_name>/editar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def eps_editar(eps_name):
+    nuevo_nombre = (request.form.get("nombre") or "").strip().upper()
+    if not nuevo_nombre:
+        flash("El nombre no puede estar vacío", "error")
+        return redirect(url_for("view_eps"))
+    execute("UPDATE eps SET nombre=%s WHERE nombre=%s", (nuevo_nombre, eps_name))
+    execute("UPDATE empleado SET eps=%s WHERE eps=%s", (nuevo_nombre, eps_name))
+    flash(f"EPS renombrada a '{nuevo_nombre}'", "success")
+    return redirect(url_for("view_eps"))
+
+
+@app.route("/view-eps/<path:eps_name>/eliminar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def eps_eliminar(eps_name):
+    execute("DELETE FROM eps WHERE nombre = %s", (eps_name,))
+    flash(f"EPS '{eps_name}' eliminada", "success")
+    return redirect(url_for("view_eps"))
+
+
+# ── CRUD FONDO DE PENSIONES ───────────────────────────────────
+
+@app.route("/view-fondos/<path:fondo_name>/editar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def fondo_editar(fondo_name):
+    nuevo_nombre = (request.form.get("nombre") or "").strip().upper()
+    if not nuevo_nombre:
+        flash("El nombre no puede estar vacío", "error")
+        return redirect(url_for("view_fondos"))
+    execute("UPDATE fondo_pensiones SET nombre=%s WHERE nombre=%s", (nuevo_nombre, fondo_name))
+    execute("UPDATE empleado SET fondo_pensiones=%s WHERE fondo_pensiones=%s", (nuevo_nombre, fondo_name))
+    flash(f"Fondo renombrado a '{nuevo_nombre}'", "success")
+    return redirect(url_for("view_fondos"))
+
+
+@app.route("/view-fondos/<path:fondo_name>/eliminar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def fondo_eliminar(fondo_name):
+    execute("DELETE FROM fondo_pensiones WHERE nombre = %s", (fondo_name,))
+    flash(f"Fondo '{fondo_name}' eliminado", "success")
+    return redirect(url_for("view_fondos"))
+
+
+# ── USUARIOS (solo ADMIN) ────────────────────────────────────
+
+_ACCIONES_MAP = {
+    "ADMIN": "TODOS LOS CAMBIOS",
+    "COORD. GH": "TODOS LOS CAMBIOS",
+    "GESTOR DE CONTRATACION": "AGREGAR Y MODIFICAR",
+    "BIENESTAR SOCIAL": "AGREGAR Y MODIFICAR",
+    "GESTOR DE NOMINA": "AGREGAR Y MODIFICAR",
+    "GESTOR SST": "VISTA",
+}
+
+
+@app.route("/users/nuevo", methods=["POST"])
+@login_required
+@role_required("ALL")
+def usuario_nuevo():
+    nombre   = (request.form.get("nombre")   or "").strip().upper()
+    email    = (request.form.get("email")    or "").strip().lower()
+    password = (request.form.get("password") or "").strip()
+    rol      = (request.form.get("rol")      or "").strip()
+
+    if not all([nombre, email, password, rol]):
+        flash("Todos los campos son obligatorios", "error")
+        return redirect(url_for("usuarios"))
+
+    if len(password) < 6:
+        flash("La contraseña debe tener mínimo 6 caracteres", "error")
+        return redirect(url_for("usuarios"))
+
+    existing = query("SELECT id_user FROM usuario WHERE LOWER(email) = %s", (email,), one=True)
+    if existing:
+        flash(f"Ya existe un usuario con el correo {email}", "error")
+        return redirect(url_for("usuarios"))
+
+    last = query("SELECT id_user FROM usuario ORDER BY id_user DESC LIMIT 1", one=True)
+    num = (int(last["id_user"].replace("US-", "")) + 1) if last else 1
+    new_id = f"US-{num:04d}"
+
+    execute(
+        "INSERT INTO usuario (id_user, email, password_hash, nombre, rol, estado, acciones) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (new_id, email, generate_password_hash(password),
+         nombre, rol, True, _ACCIONES_MAP.get(rol, "VISTA")),
+    )
+    flash(f"Usuario {nombre} creado correctamente (ID: {new_id})", "success")
+    return redirect(url_for("usuarios"))
+
+
+@app.route("/users")
+@login_required
+@role_required("ALL")
+def usuarios():
+    roles = query("SELECT nombre FROM rol ORDER BY nombre")
+    rows = query(
+        "SELECT id_user, email, nombre, rol, estado, acciones FROM usuario ORDER BY id_user"
+    )
+    activos = sum(1 for r in rows if r.get("estado"))
+    columns = [
+        {"key": "id_user",  "label": "ID"},
+        {"key": "email",    "label": "Email"},
+        {"key": "nombre",   "label": "Nombre"},
+        {"key": "rol",      "label": "Rol"},
+        {"key": "estado",   "label": "Estado", "type": "badge"},
+        {"key": "acciones", "label": "Acciones"},
+    ]
+    stats = [
+        {"value": len(rows), "label": "Total Usuarios",  "icon": "manage_accounts", "color": "green"},
+        {"value": activos,   "label": "Activos",         "icon": "verified_user",   "color": "blue"},
+    ]
+    return render_template(
+        "users.html", active_page="User",
+        rows=rows, columns=columns, stats=stats, roles=roles,
+    )
+
+
+@app.route("/users/<id>/editar", methods=["POST"])
+@login_required
+@role_required("ALL")
+def usuario_editar(id):
+    nombre = (request.form.get("nombre") or "").strip().upper()
+    email = (request.form.get("email") or "").strip().lower()
+    rol = (request.form.get("rol") or "").strip()
+    execute(
+        "UPDATE usuario SET nombre=%s, email=%s, rol=%s, acciones=%s WHERE id_user=%s",
+        (nombre, email, rol, _ACCIONES_MAP.get(rol, "VISTA"), id),
+    )
+    flash("Usuario actualizado", "success")
+    return redirect(url_for("usuarios"))
+
+
+@app.route("/users/<id>/toggle-estado", methods=["POST"])
+@login_required
+@role_required("ALL")
+def usuario_toggle_estado(id):
+    user = query("SELECT estado, nombre FROM usuario WHERE id_user=%s", (id,), one=True)
+    if not user:
+        flash("Usuario no encontrado", "error")
+        return redirect(url_for("usuarios"))
+    nuevo = not user["estado"]
+    execute("UPDATE usuario SET estado=%s WHERE id_user=%s", (nuevo, id))
+    accion = "activado" if nuevo else "desactivado"
+    flash(f"Usuario {user['nombre']} {accion}", "success")
+    return redirect(url_for("usuarios"))
+
+
+@app.route("/users/<id>/reset-password", methods=["POST"])
+@login_required
+@role_required("ALL")
+def usuario_reset_password(id):
+    nueva = (request.form.get("nueva_password") or "").strip()
+    if len(nueva) < 6:
+        flash("La contraseña debe tener mínimo 6 caracteres", "error")
+        return redirect(url_for("usuarios"))
+    execute(
+        "UPDATE usuario SET password_hash=%s WHERE id_user=%s",
+        (generate_password_hash(nueva), id),
+    )
+    flash("Contraseña restablecida", "success")
+    return redirect(url_for("usuarios"))
+
+
+# ── VIEW TOTAL HIJOS ──────────────────────────────────────────
+
+@app.route("/view-total-hijos")
+@login_required
+@module_required("total_hijos")
+def view_total_hijos():
+    rows = query(
+        "SELECT e.id_cedula, e.apellidos_nombre, "
+        "COUNT(h.id_hijo) AS total_hijos, "
+        "SUM(CASE WHEN h.estado = 'ACTIVO' THEN 1 ELSE 0 END) AS activos, "
+        "SUM(CASE WHEN h.estado = 'INACTIVO' THEN 1 ELSE 0 END) AS inactivos "
+        "FROM empleado e "
+        "JOIN hijo h ON e.id_cedula = h.id_cedula "
+        "GROUP BY e.id_cedula, e.apellidos_nombre "
+        "ORDER BY total_hijos DESC"
+    )
+    for r in rows:
+        r["activos"] = int(r["activos"] or 0)
+        r["inactivos"] = int(r["inactivos"] or 0)
+        r["total_hijos"] = int(r["total_hijos"] or 0)
+
+    total_activos = sum(r["activos"] for r in rows)
+    total_inactivos = sum(r["inactivos"] for r in rows)
+
+    columns = [
+        {"key": "id_cedula",        "label": "Cédula"},
+        {"key": "apellidos_nombre", "label": "Empleado"},
+        {"key": "total_hijos",      "label": "Total Hijos"},
+        {"key": "activos",          "label": "Activos"},
+        {"key": "inactivos",        "label": "Inactivos"},
+    ]
+    stats = [
+        {"value": len(rows), "label": "Empleados con hijos", "icon": "family_restroom", "color": "blue"},
+        {"value": total_activos, "label": "Hijos Activos", "icon": "child_care", "color": "green"},
+        {"value": total_inactivos, "label": "Hijos Inactivos", "icon": "child_friendly", "color": "orange"},
+    ]
+    return render_template(
+        "data_table.html", active_page="View Total Hijos",
+        rows=rows, columns=columns, stats=stats,
+        export_key="view_total_hijos",
+    )
+
+
+# ── GENERIC EXPORT ────────────────────────────────────────────
+
+EXPORT_CONFIGS = {
+    "personal_activo": {
+        "sql": "SELECT id_cedula, apellidos_nombre, tipo_documento, departamento, area, sexo, fecha_ingreso, celular, eps, estado FROM empleado WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre",
+        "columns": [
+            ("id_cedula", "Cédula"), ("apellidos_nombre", "Nombre"), ("tipo_documento", "Tipo Doc"),
+            ("departamento", "Departamento"), ("area", "Área"), ("sexo", "Sexo"),
+            ("fecha_ingreso", "Fecha Ingreso"), ("celular", "Celular"), ("eps", "EPS"), ("estado", "Estado"),
+        ],
+        "prefix": "Personal_Activo",
+    },
+    "personal_inactivo": {
+        "sql": "SELECT id_cedula, apellidos_nombre, tipo_documento, departamento, area, sexo, fecha_ingreso, celular, eps, estado FROM empleado WHERE estado = 'INACTIVO' ORDER BY apellidos_nombre",
+        "columns": [
+            ("id_cedula", "Cédula"), ("apellidos_nombre", "Nombre"), ("tipo_documento", "Tipo Doc"),
+            ("departamento", "Departamento"), ("area", "Área"), ("sexo", "Sexo"),
+            ("fecha_ingreso", "Fecha Ingreso"), ("celular", "Celular"), ("eps", "EPS"), ("estado", "Estado"),
+        ],
+        "prefix": "Personal_Inactivo",
+    },
+    "hijos_activos": {
+        "sql": "SELECT id_hijo, identificacion_hijo, id_cedula, apellidos_nombre, fecha_nacimiento, sexo, estado FROM hijo WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre",
+        "columns": [
+            ("id_cedula", "Cédula Padre"), ("apellidos_nombre", "Nombre Hijo"),
+            ("identificacion_hijo", "Identificación"), ("fecha_nacimiento", "Fecha Nacimiento"),
+            ("sexo", "Sexo"), ("estado", "Estado"),
+        ],
+        "prefix": "Hijos_Activos",
+    },
+    "hijos_inactivos": {
+        "sql": "SELECT id_hijo, identificacion_hijo, id_cedula, apellidos_nombre, fecha_nacimiento, sexo, estado FROM hijo WHERE estado = 'INACTIVO' ORDER BY apellidos_nombre",
+        "columns": [
+            ("id_cedula", "Cédula Padre"), ("apellidos_nombre", "Nombre Hijo"),
+            ("identificacion_hijo", "Identificación"), ("fecha_nacimiento", "Fecha Nacimiento"),
+            ("sexo", "Sexo"), ("estado", "Estado"),
+        ],
+        "prefix": "Hijos_Inactivos",
+    },
+    "retiro_personal": {
+        "sql": "SELECT id_retiro, id_cedula, apellidos_nombre, departamento, area, fecha_ingreso, fecha_retiro, dias_laborados, tipo_retiro FROM retirado ORDER BY fecha_retiro DESC",
+        "columns": [
+            ("id_cedula", "Cédula"), ("apellidos_nombre", "Nombre"), ("departamento", "Departamento"),
+            ("area", "Área"), ("fecha_ingreso", "Ingreso"), ("fecha_retiro", "Retiro"),
+            ("dias_laborados", "Días Laborados"), ("tipo_retiro", "Tipo Retiro"),
+        ],
+        "prefix": "Retiro_Personal",
+    },
+    "departamentos": {
+        "sql": "SELECT nombre, presupuestados FROM departamento ORDER BY nombre",
+        "columns": [("nombre", "Departamento"), ("presupuestados", "Presupuestados")],
+        "prefix": "Departamentos",
+    },
+    "perfil_ocupacional": {
+        "sql": (
+            "SELECT d.nombre AS departamento, a.nombre AS area, p.perfil_ocupacional, p.presupuestados "
+            "FROM perfil_ocupacional p JOIN area a ON p.area_id = a.id "
+            "JOIN departamento d ON a.departamento_id = d.id ORDER BY d.nombre, a.nombre"
+        ),
+        "columns": [
+            ("departamento", "Departamento"), ("area", "Área"),
+            ("perfil_ocupacional", "Perfil Ocupacional"), ("presupuestados", "Presupuestados"),
+        ],
+        "prefix": "Perfil_Ocupacional",
+    },
+    "view_total_hijos": {
+        "sql": (
+            "SELECT e.id_cedula, e.apellidos_nombre, COUNT(h.id_hijo) AS total_hijos, "
+            "SUM(CASE WHEN h.estado='ACTIVO' THEN 1 ELSE 0 END) AS activos, "
+            "SUM(CASE WHEN h.estado='INACTIVO' THEN 1 ELSE 0 END) AS inactivos "
+            "FROM empleado e JOIN hijo h ON e.id_cedula=h.id_cedula "
+            "GROUP BY e.id_cedula, e.apellidos_nombre ORDER BY total_hijos DESC"
+        ),
+        "columns": [
+            ("id_cedula", "Cédula"), ("apellidos_nombre", "Empleado"),
+            ("total_hijos", "Total Hijos"), ("activos", "Activos"), ("inactivos", "Inactivos"),
+        ],
+        "prefix": "Total_Hijos",
+    },
+}
+
+
+@app.route("/export/<page_key>")
+@login_required
+def generic_export(page_key):
+    cfg = EXPORT_CONFIGS.get(page_key)
+    if not cfg:
+        flash("Exportación no disponible", "error")
+        return redirect(url_for("home"))
+    rows = query(cfg["sql"])
+    return export_excel_response_generic(rows, cfg["columns"], cfg["prefix"])
+
+
+# ── DASHBOARD ─────────────────────────────────────────────────
+
+DASHBOARD_CHARTS = {
+    "tipos_retiro": {
+        "title": "Tipos de Retiro",
+        "query": "SELECT COALESCE(tipo_retiro,'SIN ASIGNAR') AS label, COUNT(*) AS cnt FROM retirado GROUP BY label ORDER BY cnt DESC",
+        "table": "retirado",
+    },
+    "eps": {
+        "title": "EPS",
+        "query": "SELECT COALESCE(eps,'N/A') AS label, COUNT(*) AS cnt FROM empleado GROUP BY label ORDER BY cnt DESC",
+        "table": "empleado",
+    },
+    "fondo_pensiones": {
+        "title": "Fondo de Pensiones",
+        "query": "SELECT COALESCE(fondo_pensiones,'N/A') AS label, COUNT(*) AS cnt FROM empleado GROUP BY label ORDER BY cnt DESC",
+        "table": "empleado",
+    },
+    "hijos": {
+        "title": "Hijos",
+        "subtitle": "¿Tiene Hijos?",
+        "query": "SELECT COALESCE(hijos,'N/A') AS label, COUNT(*) AS cnt FROM empleado GROUP BY label ORDER BY cnt DESC",
+        "table": "empleado",
+    },
+    "sexo": {
+        "title": "Sexo",
+        "query": "SELECT COALESCE(sexo,'N/A') AS label, COUNT(*) AS cnt FROM empleado GROUP BY label ORDER BY cnt DESC",
+        "table": "empleado",
+    },
+    "rh": {
+        "title": "RH",
+        "query": "SELECT COALESCE(rh,'N/A') AS label, COUNT(*) AS cnt FROM empleado GROUP BY label ORDER BY cnt DESC",
+        "table": "empleado",
+    },
+}
+
+RETIRADO_COLUMNS = [
+    ("id_cedula", "ID_Cedula"),
+    ("id_retiro", "ID_Retiro"),
+    ("apellidos_nombre", "Apellidos y Nombres"),
+    ("departamento", "Departamento"),
+    ("area", "Area"),
+    ("id_perfil_ocupacional", "ID_Perfil_Ocupacional"),
+    ("fecha_ingreso", "Fecha de Ingreso"),
+    ("fecha_retiro", "Fecha de Retiro"),
+    ("dias_laborados", "Dias laborados"),
+    ("tipo_retiro", "Tipo de Retiro"),
+    ("motivo", "Motivo"),
+    ("numero_cedula", "Numero de Cedula"),
+    ("mes_retiro", "Mes de Retiro"),
+    ("ano_retiro", "Año de Retiro"),
+    ("contador", "Contador"),
+]
+
+
+def enrich_retirados(rows):
+    """Add calculated fields to retirado rows."""
+    for r in rows:
+        r["numero_cedula"] = r.get("id_cedula", "")
+        fr = parse_fecha(r.get("fecha_retiro", ""))
+        r["mes_retiro"] = fr.month if fr else ""
+        r["ano_retiro"] = fr.year if fr else ""
+        r["contador"] = 1
+    return rows
+
+
+@app.route("/view-total-personal")
+@login_required
+@module_required("dashboard")
+def view_total_personal():
+    charts_data = {}
+    for key, cfg in DASHBOARD_CHARTS.items():
+        rows = query(cfg["query"])
+        labels = [r["label"] for r in rows]
+        values = [int(r["cnt"]) for r in rows]
+        charts_data[key] = {
+            "title": cfg["title"],
+            "subtitle": cfg.get("subtitle", cfg["title"]),
+            "labels": labels,
+            "values": values,
+        }
+    return render_template(
+        "dashboard.html", active_page="Dashboard",
+        charts_data=charts_data,
+    )
+
+
+@app.route("/dashboard/<chart_key>")
+@login_required
+@module_required("dashboard")
+def dashboard_chart(chart_key):
+    cfg = DASHBOARD_CHARTS.get(chart_key)
+    if not cfg:
+        flash("Gráfico no encontrado", "error")
+        return redirect(url_for("view_total_personal"))
+    rows = query(cfg["query"])
+    labels = [r["label"] for r in rows]
+    values = [int(r["cnt"]) for r in rows]
+    return render_template(
+        "dashboard_chart.html", active_page="Dashboard",
+        chart_key=chart_key, title=cfg["title"],
+        subtitle=cfg.get("subtitle", cfg["title"]),
+        labels=labels, values=values,
+        table_name=cfg["table"],
+    )
+
+
+@app.route("/dashboard/<chart_key>/data")
+@login_required
+@module_required("dashboard")
+def dashboard_data(chart_key):
+    cfg = DASHBOARD_CHARTS.get(chart_key)
+    if not cfg:
+        flash("Gráfico no encontrado", "error")
+        return redirect(url_for("view_total_personal"))
+    filter_val = request.args.get("filter", "")
+    if cfg["table"] == "retirado":
+        sql = "SELECT * FROM retirado"
+        params = ()
+        if filter_val:
+            sql += " WHERE tipo_retiro = %s"
+            params = (filter_val,)
+        sql += " ORDER BY apellidos_nombre"
+        rows = query(sql, params)
+        rows = enrich_retirados(rows)
+        cols = RETIRADO_COLUMNS
+        table_title = "Retirados_Sli"
+    else:
+        field_map = {
+            "eps": "eps", "fondo_pensiones": "fondo_pensiones",
+            "hijos": "hijos", "sexo": "sexo", "rh": "rh",
+        }
+        field = field_map.get(chart_key, chart_key)
+        sql = "SELECT * FROM empleado"
+        params = ()
+        if filter_val:
+            sql += f" WHERE {field} = %s"
+            params = (filter_val,)
+        sql += " ORDER BY apellidos_nombre"
+        rows = query(sql, params)
+        rows = enrich_empleados(rows)
+        cols = INLINE_COLUMNS
+        table_title = "DBase_Sli"
+    return render_template(
+        "dashboard_data.html", active_page="Dashboard",
+        chart_key=chart_key, chart_title=cfg["title"],
+        table_title=table_title,
+        rows=rows, columns=cols,
+        filter_val=filter_val,
+    )
+
+
+@app.route("/dashboard/<chart_key>/export")
+@login_required
+def dashboard_export(chart_key):
+    cfg = DASHBOARD_CHARTS.get(chart_key)
+    if not cfg:
+        flash("Gráfico no encontrado", "error")
+        return redirect(url_for("view_total_personal"))
+    filter_val = request.args.get("filter", "")
+    if cfg["table"] == "retirado":
+        sql = "SELECT * FROM retirado"
+        params = ()
+        if filter_val:
+            sql += " WHERE tipo_retiro = %s"
+            params = (filter_val,)
+        sql += " ORDER BY apellidos_nombre"
+        rows = query(sql, params)
+        rows = enrich_retirados(rows)
+        cols = RETIRADO_COLUMNS
+    else:
+        field_map = {
+            "eps": "eps", "fondo_pensiones": "fondo_pensiones",
+            "hijos": "hijos", "sexo": "sexo", "rh": "rh",
+        }
+        field = field_map.get(chart_key, chart_key)
+        sql = "SELECT * FROM empleado"
+        params = ()
+        if filter_val:
+            sql += f" WHERE {field} = %s"
+            params = (filter_val,)
+        sql += " ORDER BY apellidos_nombre"
+        rows = query(sql, params)
+        rows = enrich_empleados(rows)
+        cols = INLINE_COLUMNS
+    return export_excel_response_generic(rows, cols, f"Dashboard_{cfg['title']}")
+
+
+# ── HOME SETTING (solo ADMIN) ────────────────────────────────
+
+@app.route("/home-setting")
+@login_required
+@role_required("ALL")
+def home_setting():
+    rows = query("SELECT * FROM menu ORDER BY nombre")
+    columns = [
+        {"key": "id_menu", "label": "ID"},
+        {"key": "nombre",  "label": "Nombre"},
+        {"key": "vista",   "label": "Vista"},
+        {"key": "imagen",  "label": "Imagen"},
+    ]
+    stats = [
+        {"value": len(rows), "label": "Total Menús", "icon": "menu", "color": "green"},
+    ]
+    return render_template(
+        "data_table.html", active_page="Home Setting",
+        rows=rows, columns=columns, stats=stats,
+    )
+
+
+# ── ABOUT ─────────────────────────────────────────────────────
+
+@app.route("/about")
+@login_required
+def about():
+    return render_template("about.html", active_page="About")
+
+
+# ── TEST DB ───────────────────────────────────────────────────
+
+@app.route("/test-db")
+def test_db():
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        cursor.fetchone()
+        cursor.close()
+        conn.close()
+        return {"status": "ok", "message": "Conexión a MySQL exitosa"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}, 500
+
+
+# ── RUN ───────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    app.run(debug=True, port=5000)

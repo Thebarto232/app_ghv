@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo; <span>Fondo de Pensiones</span>
+</div>
+
+<div class="table-toolbar" style="justify-content:flex-end;margin-bottom:12px">
+    {% if can_write %}
+    <button class="btn btn-primary" onclick="openFondoModal()">
+        <span class="material-symbols-outlined" style="font-size:18px">add</span> Add
+    </button>
+    {% endif %}
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table" id="fondosTable">
+        <thead>
+            <tr>
+                <th data-sort style="min-width:250px">Fondo de Pensiones <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                <th data-sort>Related DBases <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                <th style="width:{% if can_admin %}110px{% else %}40px{% endif %}"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in fondos_list %}
+            <tr>
+                <td>{{ item.fondo }}</td>
+                <td>Related DBases ({{ item.cnt }})</td>
+                <td>
+                    <div style="display:flex;gap:4px;align-items:center;justify-content:flex-end">
+                        {% if can_admin %}
+                        <button class="btn-icon" title="Editar" onclick="editFondo('{{ item.fondo | replace("'","\\'") }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+                        </button>
+                        <button class="btn-icon" title="Eliminar" style="color:#ef4444"
+                            onclick="confirmDeleteFondo('{{ url_for('fondo_eliminar', fondo_name=item.fondo) }}','{{ item.fondo | replace("'","\\'") }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+                        </button>
+                        {% endif %}
+                        <a href="{{ url_for('fondo_detail', fondo_name=item.fondo) }}" class="btn-icon" title="Ver detalle">
+                            <span class="material-symbols-outlined">chevron_right</span>
+                        </a>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal: Add / Edit Fondo -->
+<div class="modal-overlay" id="fondoModal">
+    <div class="modal-panel">
+        <div class="modal-header">
+            <button class="modal-close" data-close-modal><span class="material-symbols-outlined">close</span></button>
+            <span class="modal-title" id="fondoModalTitle">Fondo de Pensiones Form</span>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button class="btn btn-primary" id="btnSaveFondo">Guardar</button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <form id="fondoForm" method="POST" action="{{ url_for('fondos_add') }}">
+                <div class="form-group">
+                    <label class="form-label">Fondo de Pensiones<span class="required">*</span></label>
+                    <input type="text" name="nombre" id="fondoNombre" class="form-input" required autofocus>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Confirmar Eliminar -->
+<div class="modal-overlay" id="deleteFondoModal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <h2>Confirmar Eliminación</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:20px">¿Eliminar Fondo <strong id="deleteFondoName"></strong>?</p>
+        <div class="form-actions" style="border-top:1px solid var(--border);padding-top:16px">
+            <form id="deleteFondoForm" method="POST">
+                <button type="submit" class="btn btn-danger"><span class="material-symbols-outlined" style="font-size:18px">delete</span> Eliminar</button>
+            </form>
+            <button class="btn btn-outline" data-close-modal>Cancelar</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openFondoModal() {
+    document.getElementById('fondoModalTitle').textContent = 'Agregar Fondo de Pensiones';
+    document.getElementById('fondoForm').action = '{{ url_for("fondos_add") }}';
+    document.getElementById('fondoNombre').value = '';
+    document.getElementById('fondoModal').classList.add('active');
+    document.getElementById('fondoNombre').focus();
+}
+
+function editFondo(nombre) {
+    document.getElementById('fondoModalTitle').textContent = 'Editar Fondo';
+    document.getElementById('fondoForm').action = `/view-fondos/${encodeURIComponent(nombre)}/editar`;
+    document.getElementById('fondoNombre').value = nombre;
+    document.getElementById('fondoModal').classList.add('active');
+    document.getElementById('fondoNombre').focus();
+}
+
+function confirmDeleteFondo(url, name) {
+    document.getElementById('deleteFondoName').textContent = name;
+    document.getElementById('deleteFondoForm').action = url;
+    document.getElementById('deleteFondoModal').classList.add('active');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('btnSaveFondo')?.addEventListener('click', () => document.getElementById('fondoForm').submit());
+
+    const globalSearch = document.getElementById('globalSearch');
+    if (globalSearch) {
+        globalSearch.addEventListener('input', () => {
+            const q = globalSearch.value.toLowerCase().trim();
+            document.querySelectorAll('#fondosTable tbody tr').forEach(row => {
+                row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none';
+            });
+        });
+    }
+});
+</script>
+{% endblock %}

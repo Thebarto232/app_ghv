@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solicitar acceso — Colbeef Gestión Humana</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap">
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --green:      #2D9E3F;
+            --green-dark: #1a5e28;
+            --green-mid:  #1E7A2E;
+            --red:        #E42D27;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            -webkit-font-smoothing: antialiased;
+            background: #f0f4f0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* Subtle background pattern */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 60% 50% at 80% 20%, rgba(45,158,63,.07) 0%, transparent 60%),
+                radial-gradient(ellipse 50% 40% at 10% 85%, rgba(228,45,39,.05) 0%, transparent 55%);
+            pointer-events: none;
+        }
+
+        .page-wrap {
+            width: 100%;
+            max-width: 560px;
+            position: relative;
+            z-index: 1;
+            animation: cardIn .5s ease-out both;
+        }
+
+        @keyframes cardIn {
+            from { opacity: 0; transform: translateY(20px) scale(.98); }
+            to   { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
+        /* Top brand bar */
+        .brand-bar {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .brand-bar img {
+            height: 36px;
+            background: #fff;
+            padding: 5px 12px;
+            border-radius: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.08);
+        }
+
+        .card {
+            background: #fff;
+            border-radius: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.04), 0 12px 40px rgba(0,0,0,.07);
+            border: 1px solid #e8ecef;
+            overflow: hidden;
+        }
+
+        /* Green accent strip on top */
+        .card-strip {
+            height: 5px;
+            background: linear-gradient(90deg, var(--green-dark), var(--green), var(--red));
+        }
+
+        .card-body { padding: 40px 44px; }
+
+        .card-header {
+            margin-bottom: 28px;
+        }
+        .card-header h2 {
+            font-size: 26px;
+            font-weight: 800;
+            color: #0f1923;
+            letter-spacing: -.5px;
+            margin-bottom: 5px;
+        }
+        .card-header p {
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        /* Alert */
+        .alert {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 11px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 500;
+            margin-bottom: 20px;
+        }
+        .alert.error   { background: #fff1f1; color: #c0392b; border-left: 4px solid var(--red); }
+        .alert.success { background: #f0fdf4; color: #166534; border-left: 4px solid var(--green); }
+        .alert .material-symbols-outlined { font-size: 18px; flex-shrink: 0; }
+
+        /* Fields */
+        .field { margin-bottom: 18px; }
+        .field label {
+            display: block;
+            font-size: 11px;
+            font-weight: 700;
+            color: #4b5563;
+            margin-bottom: 7px;
+            text-transform: uppercase;
+            letter-spacing: .7px;
+        }
+        .input-wrap {
+            display: flex;
+            align-items: center;
+            border: 1.5px solid #e5e7eb;
+            border-radius: 12px;
+            padding: 0 14px;
+            background: #fafbfc;
+            transition: all .2s cubic-bezier(.4,0,.2,1);
+        }
+        .input-wrap:focus-within {
+            border-color: var(--green);
+            box-shadow: 0 0 0 3px rgba(45,158,63,.12);
+            background: #fff;
+        }
+        .input-wrap .material-symbols-outlined {
+            font-size: 19px;
+            color: #b0b8c4;
+            margin-right: 10px;
+            flex-shrink: 0;
+            transition: color .2s;
+        }
+        .input-wrap:focus-within .material-symbols-outlined { color: var(--green); }
+        .input-wrap input,
+        .input-wrap select {
+            border: none;
+            outline: none;
+            padding: 13px 0;
+            font-size: 14px;
+            font-family: inherit;
+            width: 100%;
+            color: #0f1923;
+            background: transparent;
+        }
+        .input-wrap select { cursor: pointer; }
+        .input-wrap input::placeholder { color: #c4c9d4; }
+
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+        /* Hint text */
+        .field-hint {
+            font-size: 11.5px;
+            color: #9ca3af;
+            margin-top: 5px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .field-hint .material-symbols-outlined { font-size: 13px; }
+
+        /* Submit */
+        .btn-reg {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, var(--green) 0%, var(--green-dark) 100%);
+            color: #fff;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 700;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all .2s;
+            margin-top: 8px;
+            letter-spacing: .2px;
+            box-shadow: 0 4px 14px rgba(45,158,63,.35);
+            position: relative;
+            overflow: hidden;
+        }
+        .btn-reg::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(135deg, rgba(255,255,255,.12), transparent);
+        }
+        .btn-reg:hover {
+            box-shadow: 0 6px 20px rgba(45,158,63,.45);
+            transform: translateY(-1px);
+        }
+        .btn-reg:active { transform: translateY(0); }
+
+        /* Footer */
+        .card-footer {
+            margin-top: 24px;
+            padding-top: 18px;
+            border-top: 1px solid #f0f2f5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #9ca3af;
+        }
+        .card-footer a {
+            color: var(--green);
+            text-decoration: none;
+            font-weight: 600;
+            transition: color .15s;
+        }
+        .card-footer a:hover { color: var(--green-dark); text-decoration: underline; }
+
+        /* Info note */
+        .info-note {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 10px;
+            padding: 12px 14px;
+            margin-bottom: 22px;
+            font-size: 13px;
+            color: #166534;
+            line-height: 1.5;
+        }
+        .info-note .material-symbols-outlined { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+
+        @media (max-width: 600px) {
+            .row { grid-template-columns: 1fr; }
+            .card-body { padding: 28px 22px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="page-wrap">
+        <div class="brand-bar">
+            <img src="{{ url_for('static', filename='img/logo_colbeef.jpg') }}" alt="Colbeef">
+        </div>
+
+        <div class="card">
+            <div class="card-strip"></div>
+            <div class="card-body">
+                <div class="card-header">
+                    <h2>Solicitar Acceso</h2>
+                    <p>Completa los datos para crear tu cuenta de usuario</p>
+                </div>
+
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for cat, msg in messages %}
+                            <div class="alert {{ 'success' if cat == 'success' else 'error' }}">
+                                <span class="material-symbols-outlined">
+                                    {{ 'check_circle' if cat == 'success' else 'error' }}
+                                </span>
+                                {{ msg }}
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+
+                <div class="info-note">
+                    <span class="material-symbols-outlined">info</span>
+                    Tu cuenta quedará en estado <strong>&nbsp;pendiente&nbsp;</strong> hasta que un administrador la active y asigne tu rol definitivo.
+                </div>
+
+                <form method="POST" action="{{ url_for('register') }}">
+                    <div class="field">
+                        <label>Nombre completo</label>
+                        <div class="input-wrap">
+                            <span class="material-symbols-outlined">person</span>
+                            <input type="text" name="nombre" placeholder="Juan Pérez" required
+                                   value="{{ request.form.get('nombre', '') }}" autocomplete="name">
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label>Correo electrónico corporativo</label>
+                        <div class="input-wrap">
+                            <span class="material-symbols-outlined">mail</span>
+                            <input type="email" name="email" placeholder="usuario@colbeef.com" required
+                                   value="{{ request.form.get('email', '') }}" autocomplete="email">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="field">
+                            <label>Contraseña</label>
+                            <div class="input-wrap">
+                                <span class="material-symbols-outlined">lock</span>
+                                <input type="password" name="password" placeholder="Mín. 6 caracteres"
+                                       required minlength="6" autocomplete="new-password">
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label>Confirmar contraseña</label>
+                            <div class="input-wrap">
+                                <span class="material-symbols-outlined">lock_reset</span>
+                                <input type="password" name="password2" placeholder="Repetir contraseña"
+                                       required minlength="6" autocomplete="new-password">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="field">
+                        <label>Rol solicitado</label>
+                        <div class="input-wrap">
+                            <span class="material-symbols-outlined">shield_person</span>
+                            <select name="rol" required>
+                                <option value="">— Seleccionar rol —</option>
+                                {% for r in roles %}
+                                <option value="{{ r.nombre }}" {{ 'selected' if request.form.get('rol') == r.nombre }}>{{ r.nombre }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn-reg">Crear Cuenta</button>
+                </form>
+
+                <div class="card-footer">
+                    ¿Ya tienes cuenta?
+                    <a href="{{ url_for('login') }}">Iniciar sesión</a>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

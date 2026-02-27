@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo;
+    <a href="{{ url_for('view_fondos') }}">Fondo de Pensiones</a> &rsaquo;
+    <span>{{ fondo_name }}</span>
+</div>
+
+<div class="eps-detail-layout">
+    <div class="detail-card" style="max-width:300px">
+        <div class="detail-field">
+            <label>Fondo de Pensiones</label>
+            <span>{{ fondo_name }}</span>
+        </div>
+    </div>
+
+    <div class="related-section" style="flex:1">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <h3 class="related-title" style="margin:0">Related DBases <span class="related-count">{{ empleados|length }}</span></h3>
+            <div style="display:flex;gap:8px">
+                <a href="{{ url_for('fondo_inline', fondo_name=fondo_name) }}" class="btn btn-outline btn-sm" title="Ver tabla completa">
+                    Expand
+                </a>
+                {% if can_write is defined and can_write %}
+                <a href="#" class="btn btn-primary btn-sm">+ Add</a>
+                {% endif %}
+            </div>
+        </div>
+        <div class="table-wrapper">
+            {% if empleados|length > 0 %}
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Apellidos y Nombres</th>
+                        <th>Numero de Cedula</th>
+                        <th>Lugar Expedicion Documento de Ide...</th>
+                        <th>Fecha Expedicion</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in empleados %}
+                    <tr>
+                        <td>{{ e.apellidos_nombre }}</td>
+                        <td>{{ e.id_cedula }}</td>
+                        <td>{{ e.lugar_expedicion or '—' }}</td>
+                        <td>{{ e.fecha_expedicion or '—' }}</td>
+                        <td>
+                            <a href="{{ url_for('fondo_empleado_detail', fondo_name=fondo_name, cedula=e.id_cedula) }}" class="btn-icon">
+                                <span class="material-symbols-outlined">chevron_right</span>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state" style="padding:20px"><p>Sin empleados registrados</p></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

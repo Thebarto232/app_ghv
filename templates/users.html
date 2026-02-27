@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+<button class="btn btn-primary btn-sm" onclick="openNewUser()">
+    <span class="material-symbols-outlined" style="font-size:18px">person_add</span> Nuevo Usuario
+</button>
+{% endblock %}
+
+{% block content %}
+{% if stats|default(none) %}
+<div class="stats-grid animate-in">
+    {% for stat in stats %}
+    <div class="stat-card" style="animation-delay:{{ loop.index0 * 80 }}ms">
+        <div class="stat-icon {{ stat.color }}">
+            <span class="material-symbols-outlined">{{ stat.icon }}</span>
+        </div>
+        <div class="stat-info">
+            <h3 class="count-up" data-target="{{ stat.value }}">0</h3>
+            <p>{{ stat.label }}</p>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<div class="table-toolbar">
+    <div class="toolbar-left">
+        <div class="search-filter">
+            <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-secondary)">search</span>
+            <input type="text" id="tableFilter" placeholder="Buscar usuario..." autocomplete="off">
+        </div>
+    </div>
+    <div class="toolbar-right">
+        <span class="table-info" id="tableInfo">{{ rows|length }} usuarios</span>
+    </div>
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table" id="mainTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                <th>Email</th>
+                <th>Rol</th>
+                <th>Acciones Permitidas</th>
+                <th style="text-align:center;width:90px">Estado</th>
+                <th style="width:120px"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+            <tr>
+                <td>{{ row.id_user }}</td>
+                <td>{{ row.nombre }}</td>
+                <td style="font-size:12px;color:var(--text-secondary)">{{ row.email }}</td>
+                <td><span class="badge-dept">{{ row.rol }}</span></td>
+                <td>{{ row.acciones }}</td>
+                <td style="text-align:center">
+                    {% if row.estado %}
+                        <span class="badge badge-active">ACTIVO</span>
+                    {% else %}
+                        <span class="badge badge-inactive">INACTIVO</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div style="display:flex;gap:4px;justify-content:flex-end">
+                        <button class="btn-icon" title="Editar usuario"
+                            onclick="editUser('{{ row.id_user }}','{{ row.nombre }}','{{ row.email }}','{{ row.rol }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+                        </button>
+                        <button class="btn-icon" title="{{ 'Desactivar' if row.estado else 'Activar' }}"
+                            style="color:{{ '#ef4444' if row.estado else '#22c55e' }}"
+                            onclick="toggleUser('{{ row.id_user }}','{{ row.nombre }}',{{ 'true' if row.estado else 'false' }})">
+                            <span class="material-symbols-outlined" style="font-size:16px">{{ 'person_off' if row.estado else 'person_check' }}</span>
+                        </button>
+                        <button class="btn-icon" title="Restablecer contraseña"
+                            onclick="resetPwd('{{ row.id_user }}','{{ row.nombre }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">lock_reset</span>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal Nuevo Usuario -->
+<div class="modal-overlay" id="newUserModal">
+    <div class="modal" style="max-width:540px">
+        <div class="modal-header">
+            <h2><span class="material-symbols-outlined" style="font-size:20px;vertical-align:middle;margin-right:6px;color:var(--primary)">person_add</span>Crear Nuevo Usuario</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <form method="POST" action="{{ url_for('usuario_nuevo') }}">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Nombre completo<span class="required">*</span></label>
+                    <input type="text" name="nombre" class="form-input" placeholder="JUAN PÉREZ" required autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Correo electrónico<span class="required">*</span></label>
+                    <input type="email" name="email" class="form-input" placeholder="usuario@colbeef.com" required autocomplete="off">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Contraseña inicial<span class="required">*</span></label>
+                    <input type="password" name="password" class="form-input" placeholder="Mín. 6 caracteres" required minlength="6" autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Rol<span class="required">*</span></label>
+                    <select name="rol" class="form-input" required>
+                        <option value="">— Seleccionar —</option>
+                        {% for r in roles %}
+                        <option value="{{ r.nombre }}">{{ r.nombre }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:12.5px;color:#166534;margin-bottom:16px;display:flex;align-items:center;gap:8px">
+                <span class="material-symbols-outlined" style="font-size:16px;flex-shrink:0">info</span>
+                El usuario quedará <strong>activo</strong> de inmediato. Los permisos se asignan automáticamente según el rol seleccionado.
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary">
+                    <span class="material-symbols-outlined" style="font-size:18px">person_add</span> Crear Usuario
+                </button>
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Editar Usuario -->
+<div class="modal-overlay" id="userModal">
+    <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+            <h2>Editar Usuario</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <form id="userForm" method="POST">
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Nombre<span class="required">*</span></label>
+                    <input type="text" name="nombre" id="userNombre" class="form-input" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Email<span class="required">*</span></label>
+                    <input type="email" name="email" id="userEmail" class="form-input" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">Rol<span class="required">*</span></label>
+                    <select name="rol" id="userRol" class="form-input" required>
+                        {% for r in roles %}
+                        <option value="{{ r.nombre }}">{{ r.nombre }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="btn btn-primary"><span class="material-symbols-outlined" style="font-size:18px">save</span> Guardar</button>
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Toggle Estado -->
+<div class="modal-overlay" id="toggleModal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <h2 id="toggleModalTitle">Cambiar Estado</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <p id="toggleModalMsg" style="color:var(--text-secondary);font-size:14px;margin-bottom:20px"></p>
+        <div class="form-actions" style="border-top:1px solid var(--border);padding-top:16px">
+            <form id="toggleForm" method="POST">
+                <button type="submit" id="toggleBtn" class="btn btn-primary">Confirmar</button>
+            </form>
+            <button class="btn btn-outline" data-close-modal>Cancelar</button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Reset Password -->
+<div class="modal-overlay" id="pwdModal">
+    <div class="modal" style="max-width:460px">
+        <div class="modal-header">
+            <h2>Restablecer Contraseña</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <p id="pwdModalUser" style="color:var(--text-secondary);font-size:14px;margin-bottom:16px"></p>
+        <form id="pwdForm" method="POST">
+            <div class="form-group">
+                <label class="form-label">Nueva Contraseña<span class="required">*</span></label>
+                <input type="password" name="nueva_password" id="nuevaPwd" class="form-input" required minlength="6" autocomplete="new-password">
+            </div>
+            <div class="form-actions" style="margin-top:16px">
+                <button type="submit" class="btn btn-primary"><span class="material-symbols-outlined" style="font-size:18px">lock_reset</span> Restablecer</button>
+                <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openNewUser() {
+    document.getElementById('newUserModal').classList.add('active');
+}
+
+function editUser(id, nombre, email, rol) {
+    document.getElementById('userForm').action = `/users/${id}/editar`;
+    document.getElementById('userNombre').value = nombre;
+    document.getElementById('userEmail').value = email;
+    document.getElementById('userRol').value = rol;
+    document.getElementById('userModal').classList.add('active');
+}
+
+function toggleUser(id, nombre, activo) {
+    const modal = document.getElementById('toggleModal');
+    document.getElementById('toggleModalTitle').textContent = activo ? 'Desactivar Usuario' : 'Activar Usuario';
+    document.getElementById('toggleModalMsg').textContent = activo
+        ? `¿Desactivar al usuario ${nombre}? No podrá iniciar sesión.`
+        : `¿Activar al usuario ${nombre}?`;
+    const btn = document.getElementById('toggleBtn');
+    btn.className = activo ? 'btn btn-danger' : 'btn btn-primary';
+    btn.textContent = activo ? 'Desactivar' : 'Activar';
+    document.getElementById('toggleForm').action = `/users/${id}/toggle-estado`;
+    modal.classList.add('active');
+}
+
+function resetPwd(id, nombre) {
+    document.getElementById('pwdModalUser').textContent = `Usuario: ${nombre}`;
+    document.getElementById('pwdForm').action = `/users/${id}/reset-password`;
+    document.getElementById('nuevaPwd').value = '';
+    document.getElementById('pwdModal').classList.add('active');
+    document.getElementById('nuevaPwd').focus();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Count-up
+    document.querySelectorAll('.count-up').forEach(el => {
+        const target = parseInt(el.dataset.target) || 0;
+        if (!target) { el.textContent = '0'; return; }
+        let cur = 0; const step = Math.ceil(target / 30);
+        const t = setInterval(() => { cur += step; if (cur >= target) { cur = target; clearInterval(t); } el.textContent = cur; }, 16);
+    });
+    // Filter
+    const tf = document.getElementById('tableFilter');
+    if (tf) tf.addEventListener('input', () => {
+        const q = tf.value.toLowerCase();
+        let vis = 0;
+        document.querySelectorAll('#mainTable tbody tr').forEach(r => {
+            const show = r.textContent.toLowerCase().includes(q);
+            r.style.display = show ? '' : 'none';
+            if (show) vis++;
+        });
+        document.getElementById('tableInfo').textContent = `${vis} usuarios`;
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+<a href="{{ back_url }}" class="btn btn-outline">
+    <span class="material-symbols-outlined" style="font-size:18px">arrow_back</span> Volver
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="detail-card" style="max-width:800px">
+    <h3 class="form-section-title" style="color:#f97316"><span class="material-symbols-outlined">person_remove</span> Registrar Retiro de Empleado</h3>
+    <div class="detail-grid" style="margin-bottom:24px;padding-bottom:20px;border-bottom:1px solid var(--border)">
+        <div class="detail-field">
+            <label>Cédula</label>
+            <span>{{ emp.id_cedula }}</span>
+        </div>
+        <div class="detail-field">
+            <label>Nombre</label>
+            <span>{{ emp.apellidos_nombre }}</span>
+        </div>
+        <div class="detail-field">
+            <label>Departamento</label>
+            <span>{{ emp.departamento or '—' }}</span>
+        </div>
+        <div class="detail-field">
+            <label>Área</label>
+            <span>{{ emp.area or '—' }}</span>
+        </div>
+        <div class="detail-field">
+            <label>Fecha Ingreso</label>
+            <span>{{ emp.fecha_ingreso or '—' }}</span>
+        </div>
+    </div>
+
+    <form method="POST" id="retiroForm">
+        <input type="hidden" name="id_cedula" value="{{ emp.id_cedula }}">
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Fecha de Retiro<span class="required">*</span></label>
+                <input type="date" name="fecha_retiro" id="fechaRetiro" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Tipo de Retiro<span class="required">*</span></label>
+                <select name="tipo_retiro" class="form-input" required>
+                    <option value="">— Seleccionar —</option>
+                    {% for m in motivos %}
+                    <option value="{{ m.tipo_retiro }}">{{ m.tipo_retiro }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Días Laborados</label>
+                <input type="number" name="dias_laborados" id="diasLaborados" class="form-input" readonly>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group" style="grid-column:1/-1">
+                <label class="form-label">Motivo / Observaciones</label>
+                <textarea name="motivo" class="form-input" rows="3" style="resize:vertical"></textarea>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-danger">
+                <span class="material-symbols-outlined" style="font-size:18px">person_remove</span>
+                Registrar Retiro
+            </button>
+            <a href="{{ back_url }}" class="btn btn-outline">Cancelar</a>
+        </div>
+    </form>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const fechaRetiro = document.getElementById('fechaRetiro');
+    const diasLaborados = document.getElementById('diasLaborados');
+    const fechaIngreso = '{{ emp.fecha_ingreso or "" }}';
+
+    function parseFecha(str) {
+        if (!str) return null;
+        const parts = str.split('/');
+        if (parts.length === 3) return new Date(parts[2], parts[1]-1, parts[0]);
+        const d = new Date(str);
+        return isNaN(d) ? null : d;
+    }
+
+    fechaRetiro.addEventListener('change', () => {
+        const fi = parseFecha(fechaIngreso);
+        const fr = new Date(fechaRetiro.value);
+        if (fi && fr && !isNaN(fr)) {
+            const diff = Math.round((fr - fi) / (1000 * 60 * 60 * 24));
+            diasLaborados.value = diff > 0 ? diff : 0;
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo; <span>EPS</span>
+</div>
+
+<div class="table-toolbar" style="justify-content:flex-end;margin-bottom:12px">
+    {% if can_write %}
+    <button class="btn btn-primary" id="btnAddEps" onclick="openEpsModal()">
+        <span class="material-symbols-outlined" style="font-size:18px">add</span> Add
+    </button>
+    {% endif %}
+</div>
+
+<div class="table-wrapper">
+    <table class="data-table" id="epsTable">
+        <thead>
+            <tr>
+                <th data-sort style="min-width:250px">EPS <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                <th data-sort>Related DBases <span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                <th style="width:{% if can_admin %}110px{% else %}40px{% endif %}"></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in eps_list %}
+            <tr>
+                <td>{{ item.eps }}</td>
+                <td>Related DBases ({{ item.cnt }})</td>
+                <td>
+                    <div style="display:flex;gap:4px;align-items:center;justify-content:flex-end">
+                        {% if can_admin %}
+                        <button class="btn-icon" title="Editar" onclick="editEps('{{ item.eps | replace("'","\\'") }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">edit</span>
+                        </button>
+                        <button class="btn-icon" title="Eliminar" style="color:#ef4444"
+                            onclick="confirmDeleteEps('{{ url_for('eps_eliminar', eps_name=item.eps) }}','{{ item.eps | replace("'","\\'") }}')">
+                            <span class="material-symbols-outlined" style="font-size:16px">delete</span>
+                        </button>
+                        {% endif %}
+                        <a href="{{ url_for('eps_detail', eps_name=item.eps) }}" class="btn-icon" title="Ver detalle">
+                            <span class="material-symbols-outlined">chevron_right</span>
+                        </a>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Modal: Add / Edit EPS -->
+<div class="modal-overlay" id="epsModal">
+    <div class="modal-panel">
+        <div class="modal-header">
+            <button class="modal-close" data-close-modal>
+                <span class="material-symbols-outlined">close</span>
+            </button>
+            <span class="modal-title" id="epsModalTitle">EPS Form</span>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button class="btn btn-primary" id="btnSaveEps">Guardar</button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <form id="epsForm" method="POST" action="{{ url_for('eps_add') }}">
+                <div class="form-group">
+                    <label class="form-label">EPS<span class="required">*</span></label>
+                    <input type="text" name="nombre" id="epsNombre" class="form-input" required autofocus>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Confirmar Eliminar EPS -->
+<div class="modal-overlay" id="deleteEpsModal">
+    <div class="modal" style="max-width:420px">
+        <div class="modal-header">
+            <h2>Confirmar Eliminación</h2>
+            <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
+        </div>
+        <p style="color:var(--text-secondary);font-size:14px;margin-bottom:20px">¿Eliminar EPS <strong id="deleteEpsName"></strong>?</p>
+        <div class="form-actions" style="border-top:1px solid var(--border);padding-top:16px">
+            <form id="deleteEpsForm" method="POST">
+                <button type="submit" class="btn btn-danger"><span class="material-symbols-outlined" style="font-size:18px">delete</span> Eliminar</button>
+            </form>
+            <button class="btn btn-outline" data-close-modal>Cancelar</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openEpsModal() {
+    document.getElementById('epsModalTitle').textContent = 'Agregar EPS';
+    document.getElementById('epsForm').action = '{{ url_for("eps_add") }}';
+    document.getElementById('epsNombre').value = '';
+    document.getElementById('epsModal').classList.add('active');
+    document.getElementById('epsNombre').focus();
+}
+
+function editEps(nombre) {
+    document.getElementById('epsModalTitle').textContent = 'Editar EPS';
+    document.getElementById('epsForm').action = `/view-eps/${encodeURIComponent(nombre)}/editar`;
+    document.getElementById('epsNombre').value = nombre;
+    document.getElementById('epsModal').classList.add('active');
+    document.getElementById('epsNombre').focus();
+}
+
+function confirmDeleteEps(url, name) {
+    document.getElementById('deleteEpsName').textContent = name;
+    document.getElementById('deleteEpsForm').action = url;
+    document.getElementById('deleteEpsModal').classList.add('active');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('btnSaveEps')?.addEventListener('click', () => document.getElementById('epsForm').submit());
+
+    const globalSearch = document.getElementById('globalSearch');
+    if (globalSearch) {
+        globalSearch.addEventListener('input', () => {
+            const q = globalSearch.value.toLowerCase().trim();
+            document.querySelectorAll('#epsTable tbody tr').forEach(row => {
+                row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none';
+            });
+        });
+    }
+});
+</script>
+{% endblock %}

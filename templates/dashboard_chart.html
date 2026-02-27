@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block page_actions %}
+<div style="display:flex;align-items:center;gap:8px">
+    <a href="{{ url_for('dashboard_data', chart_key=chart_key) }}" class="btn btn-primary btn-sm">
+        <span class="material-symbols-outlined" style="font-size:16px">table_rows</span>
+        Data
+    </a>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="cal-breadcrumb" style="margin-bottom:16px">
+    <a href="{{ url_for('home') }}">Home</a> &rsaquo;
+    <a href="{{ url_for('view_total_personal') }}">Dashboard</a> &rsaquo;
+    <span>{{ title }}</span>
+</div>
+
+<div class="chart-expanded">
+    <div class="chart-subtitle">{{ subtitle }}</div>
+    <div class="chart-legend-full" id="legendFull"></div>
+    <div class="chart-canvas-large">
+        <canvas id="chartFull"></canvas>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script>
+const CHART_COLORS = [
+    '#4285F4','#EA4335','#FBBC04','#34A853','#FF6D01','#46BDC6',
+    '#7B61FF','#E91E63','#00BCD4','#8BC34A','#FF5722','#9C27B0',
+    '#009688','#CDDC39','#795548','#607D8B','#3F51B5','#FFC107',
+];
+
+const labels = {{ labels | tojson }};
+const values = {{ values | tojson }};
+const total = values.reduce((a, b) => a + b, 0);
+const colors = labels.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]);
+const chartKey = {{ chart_key | tojson }};
+
+const chart = new Chart(document.getElementById('chartFull'), {
+    type: 'doughnut',
+    data: {
+        labels: labels,
+        datasets: [{
+            data: values,
+            backgroundColor: colors,
+            borderWidth: 3,
+            borderColor: '#fff',
+            hoverOffset: 8,
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '50%',
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                titleFont: { size: 14 },
+                bodyFont: { size: 13 },
+                callbacks: {
+                    label: (ctx) => {
+                        const pct = ((ctx.parsed / total) * 100).toFixed(0);
+                        return ` ${ctx.label}: ${ctx.parsed} (${pct}%)`;
+                    }
+                }
+            }
+        },
+        onClick: (e, elements) => {
+            if (elements.length > 0) {
+                const idx = elements[0].index;
+                const filterVal = labels[idx];
+                window.location.href = `/dashboard/${chartKey}/data?filter=${encodeURIComponent(filterVal)}`;
+            }
+        }
+    }
+});
+
+const legendEl = document.getElementById('legendFull');
+legendEl.innerHTML = labels.map((label, i) => {
+    const pct = ((values[i] / total) * 100).toFixed(0);
+    return `<a href="/dashboard/${chartKey}/data?filter=${encodeURIComponent(label)}" class="legend-item-full">
+        <span class="legend-dot-lg" style="background:${colors[i]}"></span>
+        <span>${label}</span>
+    </a>`;
+}).join('');
+</script>
+{% endblock %}

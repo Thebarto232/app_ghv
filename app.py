@@ -687,6 +687,43 @@ def api_cumpleanos():
     return jsonify(results)
 
 
+@app.route("/cumpleanos/tarjeta")
+@login_required
+@module_required("eventos")
+def cumpleanos_tarjeta():
+    """Genera la tarjeta de cumpleaños del mes (formato bienestar: Nombre - Área: Día)."""
+    year = request.args.get("year", date.today().year, type=int)
+    month = request.args.get("month", date.today().month, type=int)
+    rows = query(
+        "SELECT apellidos_nombre, fecha_nacimiento, departamento, area "
+        "FROM empleado WHERE estado = 'ACTIVO'"
+    )
+    MESES = ("", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+             "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre")
+    lista = []
+    for r in rows:
+        bd = parse_fecha(r["fecha_nacimiento"])
+        if not bd or bd.month != month:
+            continue
+        try:
+            _ = date(year, bd.month, bd.day)
+        except ValueError:
+            continue
+        rol = (r.get("area") or "").strip() or (r.get("departamento") or "").strip() or "—"
+        nombre = (r.get("apellidos_nombre") or "").strip()
+        lista.append({"nombre": nombre, "rol": rol, "dia": bd.day})
+    lista.sort(key=lambda x: (x["dia"], x["nombre"]))
+    return render_template(
+        "cumpleanos_tarjeta.html",
+        active_page="Tarjeta Cumpleaños",
+        year=year,
+        month=month,
+        mes_nombre=MESES[month] if 1 <= month <= 12 else "",
+        lista=lista,
+        meses=list(enumerate(MESES[1:], 1)),
+    )
+
+
 # ── ANIVERSARIO LABORAL ────────────────────────────────────────
 
 @app.route("/aniversario")

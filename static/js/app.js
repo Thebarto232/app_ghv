@@ -230,6 +230,12 @@ const RT = {
         if (document.querySelector('.modal-overlay.active') ||
             document.querySelector('.cal-detail-overlay.active') ||
             this._refreshing) return;
+        // No reemplazar contenido en páginas con calendario: el calendario se pinta por JS
+        // y el HTML del servidor tiene calBody vacío; al reemplazar #pageContent quedaría en blanco.
+        if (document.querySelector('.cal-container')) {
+            this._setLiveTs();
+            return;
+        }
         this._refreshing = true;
         this._setLiveState('syncing');
         try {

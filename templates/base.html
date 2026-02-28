@@ -123,6 +123,10 @@
                 <span class="material-symbols-outlined">cake</span>
                 <span class="nav-label">Cumpleaños</span>
             </a>
+            <a href="{{ url_for('cumpleanos_tarjeta') }}" class="nav-item {{ 'active' if active_page == 'Tarjeta Cumpleaños' }}">
+                <span class="material-symbols-outlined">card_giftcard</span>
+                <span class="nav-label">Tarjeta Cumpleaños del mes</span>
+            </a>
             <a href="{{ url_for('aniversario') }}" class="nav-item {{ 'active' if active_page == 'Aniversario Laboral' }}">
                 <span class="material-symbols-outlined">workspace_premium</span>
                 <span class="nav-label">Aniversario Laboral</span>

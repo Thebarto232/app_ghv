@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="tarjeta-cumple-wrap">
+    <div class="tarjeta-cumple-actions">
+        <a href="{{ url_for('cumpleanos') }}" class="btn btn-outline btn-sm">
+            <span class="material-symbols-outlined" style="font-size:18px">calendar_month</span> Volver al calendario
+        </a>
+        <form method="get" action="{{ url_for('cumpleanos_tarjeta') }}" class="tarjeta-cumple-form">
+            <label>Mes</label>
+            <select name="month" onchange="this.form.submit()">
+                {% for num, nombre in meses %}
+                <option value="{{ num }}" {{ 'selected' if num == month else '' }}>{{ nombre }}</option>
+                {% endfor %}
+            </select>
+            <label>Año</label>
+            <select name="year" onchange="this.form.submit()">
+                {% for y in range(year - 2, year + 3) %}
+                <option value="{{ y }}" {{ 'selected' if y == year else '' }}>{{ y }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit" class="btn btn-primary btn-sm">Generar</button>
+        </form>
+        <button type="button" class="btn btn-primary btn-sm no-print" id="btnImprimir">
+            <span class="material-symbols-outlined" style="font-size:18px">print</span> Imprimir
+        </button>
+        <button type="button" class="btn btn-primary btn-sm no-print" id="btnDescargarPdf">
+            <span class="material-symbols-outlined" style="font-size:18px">picture_as_pdf</span> Descargar PDF
+        </button>
+    </div>
+
+    <div class="tarjeta-cumple-card" id="tarjetaCumple">
+        <div class="tarjeta-cumple-banner top">
+            <span class="tarjeta-cumple-icon">🎂</span>
+            <span class="tarjeta-cumple-icon">🎈</span>
+            <span class="tarjeta-cumple-icon">🎉</span>
+        </div>
+        <h1 class="tarjeta-cumple-title">Cumpleaños {{ mes_nombre }}</h1>
+        <p class="tarjeta-cumple-subtitle">{{ year }}</p>
+
+        <ul class="tarjeta-cumple-list">
+            {% for item in lista %}
+            <li>
+                <span class="tarjeta-cumple-texto">
+                    <span class="tarjeta-cumple-nombre">{{ item.nombre }}</span>
+                    <span class="tarjeta-cumple-sep">—</span>
+                    <span class="tarjeta-cumple-rol">{{ item.rol }}</span>
+                </span>
+                <span class="tarjeta-cumple-dia" title="Día del mes">{{ "%02d"|format(item.dia) }}</span>
+            </li>
+            {% else %}
+            <li class="tarjeta-cumple-empty">No hay cumpleaños registrados en {{ mes_nombre }}.</li>
+            {% endfor %}
+        </ul>
+
+        <div class="tarjeta-cumple-banner bottom">
+            <span class="tarjeta-cumple-icon">🎈</span>
+            <span class="tarjeta-cumple-icon">🎂</span>
+        </div>
+        <div class="tarjeta-cumple-logo">
+            <img src="{{ url_for('static', filename='img/logo_colbeef.jpg') }}" alt="Colbeef" class="tarjeta-logo-img">
+        </div>
+    </div>
+</div>
+
+<style>
+.tarjeta-cumple-wrap {
+    padding: 24px 20px 32px;
+    max-width: 680px;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+.tarjeta-cumple-actions {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 20px;
+}
+.tarjeta-cumple-form {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.tarjeta-cumple-form select { padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); }
+.tarjeta-cumple-card {
+    background: linear-gradient(180deg, #fefaf6 0%, #fcf4ee 50%, #fefaf6 100%);
+    border-radius: 16px;
+    padding: 28px 36px 24px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+    border: 1px solid rgba(0,0,0,0.05);
+    position: relative;
+    overflow: hidden;
+    box-sizing: border-box;
+    max-width: 100%;
+}
+.tarjeta-cumple-banner {
+    display: flex; justify-content: center; gap: 14px; margin-bottom: 6px;
+}
+.tarjeta-cumple-banner.bottom { margin-top: 20px; margin-bottom: 4px; }
+.tarjeta-cumple-icon { font-size: 22px; opacity: 0.85; }
+.tarjeta-cumple-title {
+    font-family: Georgia, serif; font-size: 1.65rem; color: #2c1810; text-align: center;
+    margin: 0 0 2px 0; letter-spacing: 0.02em;
+}
+.tarjeta-cumple-subtitle { text-align: center; color: #6b5344; font-size: 0.95rem; margin: 0 0 20px 0; }
+.tarjeta-cumple-list {
+    list-style: none; padding: 0; margin: 0;
+}
+.tarjeta-cumple-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px 10px 14px;
+    margin: 0 0 6px 0;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.75);
+    border-left: 3px solid var(--colbeef-green, #2D9E3F);
+    font-size: 0.95rem;
+    color: #2c1810;
+    min-height: 44px;
+    box-sizing: border-box;
+    page-break-inside: avoid;
+    break-inside: avoid;
+}
+.tarjeta-cumple-texto {
+    flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px;
+    overflow-wrap: break-word; word-break: break-word;
+}
+.tarjeta-cumple-nombre { font-weight: 600; }
+.tarjeta-cumple-sep { color: #9a8575; font-weight: 400; flex-shrink: 0; }
+.tarjeta-cumple-rol { color: #5a4a3a; }
+.tarjeta-cumple-dia {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 28px;
+    padding: 0 8px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, var(--colbeef-green, #2D9E3F), #248a32);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+.tarjeta-cumple-empty { font-style: italic; color: #6b5344; border-left-color: #ccc; justify-content: flex-start; }
+.tarjeta-cumple-logo {
+    text-align: center;
+    margin-top: 16px;
+    margin-left: 0;
+    margin-right: 0;
+    padding: 12px 0 0;
+    border-top: 1px solid rgba(0,0,0,0.06);
+    max-width: 100%;
+    box-sizing: border-box;
+}
+.tarjeta-logo-img {
+    max-height: 44px;
+    max-width: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    display: block;
+    margin: 0 auto;
+}
+
+/* Impresión: solo la tarjeta, sin partir */
+@media print {
+    body * { visibility: hidden; }
+    .tarjeta-cumple-wrap, .tarjeta-cumple-wrap *, #tarjetaCumple, #tarjetaCumple * { visibility: visible; }
+    .tarjeta-cumple-wrap {
+        position: absolute; left: 0; top: 0; width: 100%; padding: 0; margin: 0; max-width: none;
+    }
+    .tarjeta-cumple-actions, .no-print { display: none !important; }
+    .tarjeta-cumple-card {
+        box-shadow: none; border: 1px solid #ccc; padding: 20px 28px;
+        page-break-inside: avoid; break-inside: avoid;
+        max-width: 100%; margin: 0;
+    }
+    .tarjeta-cumple-list li { page-break-inside: avoid; break-inside: avoid; }
+    @page { margin: 1.2cm; }
+    body { background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script>
+(function() {
+    document.getElementById('btnImprimir').addEventListener('click', function() { window.print(); });
+
+    document.getElementById('btnDescargarPdf').addEventListener('click', function() {
+        var btn = this;
+        var card = document.getElementById('tarjetaCumple');
+        if (!card || typeof html2pdf === 'undefined') {
+            alert('No se pudo generar el PDF. Pruebe con Imprimir y guardar como PDF.');
+            return;
+        }
+        btn.disabled = true;
+        btn.querySelector('.material-symbols-outlined').parentElement.insertAdjacentHTML('afterbegin', '<span class="pdf-spin"></span>');
+        var opt = {
+            margin: 15,
+            filename: 'Cumpleanos_' + (card.querySelector('.tarjeta-cumple-title') ? card.querySelector('.tarjeta-cumple-title').textContent.replace(/\s+/g, '_') : 'mes') + '.pdf',
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+            pagebreak: { mode: ['avoid-all'], avoid: ['li', '.tarjeta-cumple-list li'] }
+        };
+        html2pdf().set(opt).from(card).save().then(function() {
+            btn.disabled = false;
+            var spin = btn.querySelector('.pdf-spin');
+            if (spin) spin.remove();
+        }).catch(function() {
+            btn.disabled = false;
+            var spin = btn.querySelector('.pdf-spin');
+            if (spin) spin.remove();
+            alert('Error al generar el PDF. Use Imprimir y elija "Guardar como PDF".');
+        });
+    });
+})();
+</script>
+<style>.pdf-spin { display: inline-block; width: 14px; height: 14px; border: 2px solid transparent; border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; margin-right: 6px; vertical-align: middle; } @keyframes spin { to { transform: rotate(360deg); } }</style>
+{% endblock %}

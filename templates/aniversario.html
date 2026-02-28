@@ -3,6 +3,7 @@
 {% block content %}
 <div class="cal-container"
      data-api="/api/aniversario"
+     data-show-stats="true"
      data-fields='[
         {"key":"apellidos_nombre","label":"Apellidos y Nombres"},
         {"key":"id_cedula","label":"Numero de Cedula"},
@@ -22,7 +23,12 @@
      ]'>
     <!-- Breadcrumb -->
     <div class="cal-breadcrumb">
-        <a href="{{ url_for('home') }}">Home</a> &rsaquo; <span>Date Cumpleaños Laboral</span>
+        <a href="{{ url_for('home') }}">Home</a> &rsaquo; <span>Aniversario Laboral</span>
+    </div>
+
+    <!-- Mini estadísticas para Bienestar -->
+    <div class="cal-mini-stats-wrap" id="calMiniStatsWrap" aria-label="Resumen para Bienestar">
+        <div class="cal-mini-stats" id="calMiniStats"></div>
     </div>
 
     <!-- Toolbar -->

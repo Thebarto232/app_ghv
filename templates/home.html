@@ -1,7 +1,20 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="home-grid">
+<div class="home-page">
+    <p class="home-section-label">Accesos rápidos</p>
+    <div class="home-grid">
+    {% if vm.dashboard %}
+    <a href="{{ url_for('view_total_personal') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #eff6ff, #dbeafe); border: 2px solid #93c5fd">
+            <span class="material-symbols-outlined" style="color:#2563eb">analytics</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot blue"></span>
+            Gráficos
+        </div>
+    </a>
+    {% endif %}
     {% if vm.eventos %}
     <a href="{{ url_for('cumpleanos') }}" class="home-card">
         <div class="home-card-img" style="background: linear-gradient(135deg, #fff5f5, #ffe4e6)">
@@ -68,18 +81,6 @@
     </a>
     {% endif %}
 
-    {% if vm.dashboard %}
-    <a href="{{ url_for('view_total_personal') }}" class="home-card">
-        <div class="home-card-img" style="background: linear-gradient(135deg, #f0f9ff, #e0f2fe)">
-            <span class="material-symbols-outlined" style="color:#0ea5e9">monitoring</span>
-        </div>
-        <div class="home-card-label">
-            <span class="card-dot blue"></span>
-            Dashboard
-        </div>
-    </a>
-    {% endif %}
-
     {% if vm.personal %}
     <a href="{{ url_for('personal_activo') }}" class="home-card">
         <div class="home-card-img" style="background: linear-gradient(135deg, #f0fdf4, #dcfce7)">
@@ -103,5 +104,6 @@
         </div>
     </a>
     {% endif %}
+    </div>
 </div>
 {% endblock %}

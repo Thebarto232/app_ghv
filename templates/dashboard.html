@@ -1,36 +1,96 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="cal-breadcrumb" style="margin-bottom:16px">
-    <a href="{{ url_for('home') }}">Home</a> &rsaquo;
-    <span>Dashboard</span>
-</div>
+<div class="dashboard-wrap">
+    {% if ultima_actualizacion is defined and ultima_actualizacion %}
+    <p style="margin:0 0 16px 0; font-size:0.85rem; color:var(--text-secondary)">Última actualización: {{ ultima_actualizacion }}</p>
+    {% endif %}
 
-<div class="dashboard-grid">
-    {% for key, chart in charts_data.items() %}
-    <div class="dash-card" data-key="{{ key }}">
-        <div class="dash-card-header">
-            <span class="dash-card-title">{{ chart.title }}</span>
-            <div class="dash-card-actions">
-                <a href="{{ url_for('dashboard_export', chart_key=key) }}" class="btn btn-primary btn-sm" onclick="return confirmDashExport(event, this.href)">Exportar</a>
-                <a href="{{ url_for('dashboard_chart', chart_key=key) }}" class="btn-icon" title="Expandir">
-                    <span class="material-symbols-outlined" style="font-size:18px">open_in_full</span>
-                </a>
+    <section class="stats-grid" style="margin-bottom:24px">
+        <div class="stat-card">
+            <div class="stat-icon green"><span class="material-symbols-outlined">group</span></div>
+            <div class="stat-info">
+                <h3 id="kpiActivos">{{ kpi_activos|default(0) }}</h3>
+                <p>Personal activo</p>
             </div>
         </div>
-        <div class="dash-card-subtitle">{{ chart.subtitle }}</div>
-        <div class="dash-legend" id="legend-{{ key }}"></div>
-        <div class="dash-chart-wrap">
-            <canvas id="chart-{{ key }}"></canvas>
+        <div class="stat-card">
+            <div class="stat-icon orange"><span class="material-symbols-outlined">person_off</span></div>
+            <div class="stat-info">
+                <h3 id="kpiRetirosMes">{{ kpi_retiros_mes|default(0) }}</h3>
+                <p>Retiros este mes</p>
+            </div>
         </div>
-    </div>
-    {% endfor %}
+        <div class="stat-card">
+            <div class="stat-icon blue"><span class="material-symbols-outlined">pending_actions</span></div>
+            <div class="stat-info">
+                <h3 id="kpiPendientes">{{ kpi_solicitudes_pend|default(0) }}</h3>
+                <p>Solicitudes pendientes</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon green"><span class="material-symbols-outlined">check_circle</span></div>
+            <div class="stat-info">
+                <h3 id="kpiResueltasHoy">{{ kpi_resueltas_hoy|default(0) }}</h3>
+                <p>Resueltas hoy</p>
+            </div>
+        </div>
+    </section>
+
+    {% if retiros_mes_labels is defined and retiros_mes_labels %}
+    <section class="dash-card" style="margin-bottom:24px">
+        <div class="dash-card-header">
+            <span class="dash-card-title">Tendencia de retiros por mes</span>
+        </div>
+        <div class="dash-card-subtitle">Últimos 12 meses</div>
+        <div class="dash-chart-wrap" style="height:280px">
+            <canvas id="chart-retiros-mes"></canvas>
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="dashboard-grid">
+        {% for key, chart in charts_data.items() %}
+        <div class="dash-card" data-key="{{ key }}">
+            <div class="dash-card-header">
+                <span class="dash-card-title">{{ chart.title }}</span>
+                <div class="dash-card-actions">
+                    <a href="{{ url_for('dashboard_export', chart_key=key) }}" class="btn btn-primary btn-sm" onclick="return confirmDashExport(event, this.href)">Exportar</a>
+                    <a href="{{ url_for('dashboard_chart', chart_key=key) }}" class="btn-icon" title="Expandir">
+                        <span class="material-symbols-outlined" style="font-size:18px">open_in_full</span>
+                    </a>
+                </div>
+            </div>
+            <div class="dash-card-subtitle">{{ chart.subtitle }}</div>
+            <div class="dash-legend" id="legend-{{ key }}"></div>
+            <div class="dash-chart-wrap">
+                <canvas id="chart-{{ key }}"></canvas>
+            </div>
+        </div>
+        {% endfor %}
+    </section>
+
+    {% if actividad_reciente is defined and actividad_reciente %}
+    <section style="margin-top:24px; padding:16px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg)">
+        <h3 style="margin:0 0 12px 0; font-size:1rem">Actividad reciente</h3>
+        <ul style="list-style:none; margin:0; padding:0; font-size:0.88rem">
+            {% for a in actividad_reciente %}
+            <li style="padding:6px 0; border-bottom:1px solid var(--border); display:flex; flex-wrap:wrap; gap:8px; align-items:baseline">
+                <span style="color:var(--text-secondary); min-width:70px">{{ a.fecha_str|default('—') }}</span>
+                <span style="font-weight:500">{{ a.accion }}</span>
+                {% if a.modulo %}<span style="font-size:0.8rem; color:var(--text-secondary)">{{ a.modulo }}</span>{% endif %}
+                {% if a.detalle %}<span style="font-size:0.8rem; color:var(--text-secondary); max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ a.detalle }}</span>{% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
 </div>
 
 <div id="dashExportModal" class="export-modal-overlay" style="display:none">
     <div class="modal-box">
-        <h3>Confirm</h3>
-        <p>¿Desea Exportar la Información?</p>
+        <h3>Confirmar</h3>
+        <p>¿Desea exportar la información?</p>
         <div class="modal-actions">
             <button class="btn btn-secondary" onclick="closeDashExport()">No</button>
             <a href="#" class="btn btn-primary" id="dashExportLink">Exportar</a>
@@ -42,16 +102,19 @@
 {% block scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <script>
+Chart.defaults.animation.duration = 600;
+Chart.defaults.interaction.mode = 'nearest';
+
 const CHART_COLORS = [
     '#4285F4','#EA4335','#FBBC04','#34A853','#FF6D01','#46BDC6',
     '#7B61FF','#E91E63','#00BCD4','#8BC34A','#FF5722','#9C27B0',
-    '#009688','#CDDC39','#795548','#607D8B','#3F51B5','#FFC107',
 ];
 
 const chartsData = {{ charts_data | tojson }};
 
 Object.entries(chartsData).forEach(([key, data]) => {
     const ctx = document.getElementById('chart-' + key);
+    if (!ctx) return;
     const total = data.values.reduce((a, b) => a + b, 0);
     const colors = data.labels.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]);
 
@@ -64,7 +127,7 @@ Object.entries(chartsData).forEach(([key, data]) => {
                 backgroundColor: colors,
                 borderWidth: 2,
                 borderColor: '#fff',
-                hoverBorderWidth: 0,
+                hoverOffset: 8,
             }]
         },
         options: {
@@ -75,9 +138,10 @@ Object.entries(chartsData).forEach(([key, data]) => {
                 legend: { display: false },
                 tooltip: {
                     callbacks: {
+                        title: (items) => items[0]?.label || '',
                         label: (ctx) => {
-                            const pct = ((ctx.parsed / total) * 100).toFixed(0);
-                            return ` ${ctx.label}: ${ctx.parsed} (${pct}%)`;
+                            const pct = total ? ((ctx.parsed / total) * 100).toFixed(1) : 0;
+                            return ' ' + ctx.parsed + ' (' + pct + '%)';
                         }
                     }
                 }
@@ -86,19 +150,59 @@ Object.entries(chartsData).forEach(([key, data]) => {
     });
 
     const legendEl = document.getElementById('legend-' + key);
-    const maxShow = 4;
-    const items = data.labels.map((label, i) => {
-        return `<span class="legend-item"><span class="legend-dot" style="background:${colors[i]}"></span>${label}</span>`;
-    });
-    let html = items.slice(0, maxShow).join('');
-    if (items.length > maxShow) {
-        const page = Math.ceil(items.length / maxShow);
-        html += `<span class="legend-more">1/${page} ▸</span>`;
+    if (legendEl) {
+        const maxShow = 4;
+        const items = data.labels.map((label, i) => {
+            return '<span class="legend-item"><span class="legend-dot" style="background:' + colors[i] + '"></span>' + label + '</span>';
+        });
+        let html = items.slice(0, maxShow).join('');
+        if (items.length > maxShow) {
+            html += '<span class="legend-more">1/' + Math.ceil(data.labels.length / maxShow) + ' ▸</span>';
+        }
+        legendEl.innerHTML = html;
     }
-    legendEl.innerHTML = html;
 });
 
-let pendingExportUrl = '';
+{% if retiros_mes_labels is defined and retiros_mes_labels and retiros_mes_values is defined %}
+(function() {
+    const ctx = document.getElementById('chart-retiros-mes');
+    if (!ctx) return;
+    const labels = {{ retiros_mes_labels | tojson }};
+    const values = {{ retiros_mes_values | tojson }};
+
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Retiros',
+                data: values,
+                borderColor: '#16a34a',
+                backgroundColor: 'rgba(22, 163, 74, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.3,
+                pointRadius: 3,
+                pointBackgroundColor: '#fff',
+                pointBorderColor: '#16a34a',
+                pointBorderWidth: 1,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { intersect: false },
+            plugins: { legend: { display: false } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.06)' }, ticks: { stepSize: 1 } },
+                x: { grid: { display: false }, ticks: { maxRotation: 45 } }
+            }
+        }
+    });
+})();
+{% endif %}
+
+var pendingExportUrl = '';
 function confirmDashExport(e, url) {
     e.preventDefault();
     pendingExportUrl = url;

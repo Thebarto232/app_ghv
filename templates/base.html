@@ -164,7 +164,7 @@
 
         {% if vm.total_hijos or vm.dashboard %}
         <div class="sidebar-section">
-            <span class="sidebar-label">Reportes</span>
+            <span class="sidebar-label">Gráficos</span>
             {% if vm.total_hijos %}
             <a href="{{ url_for('view_total_hijos') }}" class="nav-item {{ 'active' if active_page == 'View Total Hijos' }}">
                 <span class="material-symbols-outlined">table_chart</span>
@@ -172,29 +172,41 @@
             </a>
             {% endif %}
             {% if vm.dashboard %}
-            <a href="{{ url_for('view_total_personal') }}" class="nav-item {{ 'active' if active_page == 'View Total Personal' }}">
-                <span class="material-symbols-outlined">analytics</span>
-                <span class="nav-label">Total Personal</span>
+            <a href="{{ url_for('view_total_personal') }}" class="nav-item {{ 'active' if active_page == 'Dashboard' }}">
+                <span class="material-symbols-outlined">bar_chart</span>
+                <span class="nav-label">Gráficos</span>
             </a>
             {% endif %}
         </div>
         {% endif %}
 
-        {% if vm.admin %}
+        {% if vm.admin or vm.admin_usuarios %}
         <div class="sidebar-section">
             <span class="sidebar-label">Admin</span>
+            {% if vm.dashboard %}
+            <a href="{{ url_for('view_total_personal') }}" class="nav-item {{ 'active' if active_page == 'Dashboard' }}">
+                <span class="material-symbols-outlined">analytics</span>
+                <span class="nav-label">Dashboard</span>
+            </a>
+            {% endif %}
+            {% if vm.admin %}
             <a href="{{ url_for('home_setting') }}" class="nav-item {{ 'active' if active_page == 'Home Setting' }}">
                 <span class="material-symbols-outlined">tune</span>
                 <span class="nav-label">Home Setting</span>
             </a>
+            {% endif %}
+            {% if vm.admin_usuarios %}
             <a href="{{ url_for('usuarios') }}" class="nav-item {{ 'active' if active_page == 'User' }}">
                 <span class="material-symbols-outlined">group</span>
                 <span class="nav-label">Usuarios</span>
             </a>
+            {% endif %}
+            {% if vm.admin %}
             <a href="{{ url_for('admin_catalogos') }}" class="nav-item {{ 'active' if active_page == 'Catalogos' }}">
                 <span class="material-symbols-outlined">list_alt</span>
                 <span class="nav-label">Catálogos</span>
             </a>
+            {% endif %}
         </div>
         {% endif %}
 

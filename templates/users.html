@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 
 {% block page_actions %}
+{% if can_create|default(false) %}
 <button class="btn btn-primary btn-sm" onclick="openNewUser()">
     <span class="material-symbols-outlined" style="font-size:18px">person_add</span> Nuevo Usuario
 </button>
+{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -29,6 +31,12 @@
             <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-secondary)">search</span>
             <input type="text" id="tableFilter" placeholder="Buscar usuario..." autocomplete="off">
         </div>
+        <select id="filterRol" class="form-input" style="width:auto;min-width:180px;margin-left:8px" title="Filtrar por rol">
+            <option value="">Todos los roles</option>
+            {% for r in roles_con_desc|default(roles) %}
+            <option value="{{ r.nombre }}">{{ r.nombre }}</option>
+            {% endfor %}
+        </select>
     </div>
     <div class="toolbar-right">
         <span class="table-info" id="tableInfo">{{ rows|length }} usuarios</span>
@@ -54,7 +62,7 @@
                 <td>{{ row.id_user }}</td>
                 <td>{{ row.nombre }}</td>
                 <td style="font-size:12px;color:var(--text-secondary)">{{ row.email }}</td>
-                <td><span class="badge-dept">{{ row.rol }}</span></td>
+                <td data-rol="{{ row.rol }}"><span class="badge-dept">{{ row.rol }}</span></td>
                 <td>{{ row.acciones }}</td>
                 <td style="text-align:center">
                     {% if row.estado %}
@@ -65,19 +73,25 @@
                 </td>
                 <td>
                     <div style="display:flex;gap:4px;justify-content:flex-end">
-                        <button class="btn-icon" title="Editar usuario"
-                            onclick="editUser('{{ row.id_user }}','{{ row.nombre }}','{{ row.email }}','{{ row.rol }}')">
+                        {% if can_edit|default(false) %}
+                        <button class="btn-icon btn-edit-user" title="Editar usuario"
+                            data-id="{{ row.id_user }}" data-nombre="{{ row.nombre|e }}" data-email="{{ row.email|e }}" data-rol="{{ row.rol|e }}">
                             <span class="material-symbols-outlined" style="font-size:16px">edit</span>
                         </button>
-                        <button class="btn-icon" title="{{ 'Desactivar' if row.estado else 'Activar' }}"
+                        {% endif %}
+                        {% if can_toggle|default(false) %}
+                        <button class="btn-icon btn-toggle-user" title="{{ 'Desactivar' if row.estado else 'Activar' }}"
                             style="color:{{ '#ef4444' if row.estado else '#22c55e' }}"
-                            onclick="toggleUser('{{ row.id_user }}','{{ row.nombre }}',{{ 'true' if row.estado else 'false' }})">
+                            data-id="{{ row.id_user }}" data-nombre="{{ row.nombre|e }}" data-activo="{{ 'true' if row.estado else 'false' }}">
                             <span class="material-symbols-outlined" style="font-size:16px">{{ 'person_off' if row.estado else 'person_check' }}</span>
                         </button>
-                        <button class="btn-icon" title="Restablecer contraseña"
-                            onclick="resetPwd('{{ row.id_user }}','{{ row.nombre }}')">
+                        {% endif %}
+                        {% if can_reset|default(false) %}
+                        <button class="btn-icon btn-reset-pwd" title="Restablecer contraseña"
+                            data-id="{{ row.id_user }}" data-nombre="{{ row.nombre|e }}">
                             <span class="material-symbols-outlined" style="font-size:16px">lock_reset</span>
                         </button>
+                        {% endif %}
                     </div>
                 </td>
             </tr>
@@ -93,7 +107,7 @@
             <h2><span class="material-symbols-outlined" style="font-size:20px;vertical-align:middle;margin-right:6px;color:var(--primary)">person_add</span>Crear Nuevo Usuario</h2>
             <button class="btn-icon" data-close-modal><span class="material-symbols-outlined">close</span></button>
         </div>
-        <form method="POST" action="{{ url_for('usuario_nuevo') }}">
+        <form method="POST" action="{{ url_for('usuario_nuevo') }}" id="formNewUser">
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Nombre completo<span class="required">*</span></label>
@@ -107,14 +121,21 @@
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">Contraseña inicial<span class="required">*</span></label>
-                    <input type="password" name="password" class="form-input" placeholder="Mín. 6 caracteres" required minlength="6" autocomplete="new-password">
+                    <input type="password" name="password" id="newUserPwd" class="form-input" placeholder="Mín. 8 caracteres, letra y número" required minlength="8" autocomplete="new-password">
                 </div>
                 <div class="form-group">
+                    <label class="form-label">Repetir contraseña<span class="required">*</span></label>
+                    <input type="password" name="confirmar_password" id="newUserPwdConfirm" class="form-input" placeholder="Repetir contraseña" required minlength="8" autocomplete="new-password">
+                </div>
+            </div>
+            <p class="form-hint" style="margin-top:-8px;margin-bottom:12px;font-size:12px;color:var(--text-secondary)">Mínimo 8 caracteres, al menos una letra y un número.</p>
+            <div class="form-row">
+                <div class="form-group">
                     <label class="form-label">Rol<span class="required">*</span></label>
-                    <select name="rol" class="form-input" required>
+                    <select name="rol" id="newUserRol" class="form-input" required>
                         <option value="">— Seleccionar —</option>
-                        {% for r in roles %}
-                        <option value="{{ r.nombre }}">{{ r.nombre }}</option>
+                        {% for r in roles_crear|default(roles_con_desc)|default(roles) %}
+                        <option value="{{ r.nombre }}" title="{{ r.desc|default('') }}">{{ r.nombre }}{% if r.desc %} — {{ r.desc }}{% endif %}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -124,7 +145,7 @@
                 El usuario quedará <strong>activo</strong> de inmediato. Los permisos se asignan automáticamente según el rol seleccionado.
             </div>
             <div class="form-actions">
-                <button type="submit" class="btn btn-primary">
+                <button type="submit" class="btn btn-primary" id="btnCrearUsuario">
                     <span class="material-symbols-outlined" style="font-size:18px">person_add</span> Crear Usuario
                 </button>
                 <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
@@ -134,7 +155,7 @@
 </div>
 
 <!-- Modal Editar Usuario -->
-<div class="modal-overlay" id="userModal">
+<div class="modal-overlay" id="userModal" data-admin-email="{{ admin_email|default('tecnologia@colbeef.com')|e }}">
     <div class="modal" style="max-width:520px">
         <div class="modal-header">
             <h2>Editar Usuario</h2>
@@ -155,8 +176,8 @@
                 <div class="form-group">
                     <label class="form-label">Rol<span class="required">*</span></label>
                     <select name="rol" id="userRol" class="form-input" required>
-                        {% for r in roles %}
-                        <option value="{{ r.nombre }}">{{ r.nombre }}</option>
+                        {% for r in roles_con_desc|default(roles) %}
+                        <option value="{{ r.nombre }}" title="{{ r.desc|default('') }}">{{ r.nombre }}{% if r.desc %} — {{ r.desc }}{% endif %}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -197,8 +218,13 @@
         <form id="pwdForm" method="POST">
             <div class="form-group">
                 <label class="form-label">Nueva Contraseña<span class="required">*</span></label>
-                <input type="password" name="nueva_password" id="nuevaPwd" class="form-input" required minlength="6" autocomplete="new-password">
+                <input type="password" name="nueva_password" id="nuevaPwd" class="form-input" placeholder="Mín. 8 caracteres, letra y número" required minlength="8" autocomplete="new-password">
             </div>
+            <div class="form-group">
+                <label class="form-label">Repetir nueva contraseña<span class="required">*</span></label>
+                <input type="password" name="confirmar_password" id="nuevaPwdConfirm" class="form-input" placeholder="Repetir contraseña" required minlength="8" autocomplete="new-password">
+            </div>
+            <p class="form-hint" style="margin-top:-8px;margin-bottom:12px;font-size:12px;color:var(--text-secondary)">Mínimo 8 caracteres, al menos una letra y un número.</p>
             <div class="form-actions" style="margin-top:16px">
                 <button type="submit" class="btn btn-primary"><span class="material-symbols-outlined" style="font-size:18px">lock_reset</span> Restablecer</button>
                 <button type="button" class="btn btn-outline" data-close-modal>Cancelar</button>
@@ -215,11 +241,21 @@ function openNewUser() {
 }
 
 function editUser(id, nombre, email, rol) {
+    const modal = document.getElementById('userModal');
     document.getElementById('userForm').action = `/users/${id}/editar`;
     document.getElementById('userNombre').value = nombre;
     document.getElementById('userEmail').value = email;
-    document.getElementById('userRol').value = rol;
-    document.getElementById('userModal').classList.add('active');
+    const rolSelect = document.getElementById('userRol');
+    const adminEmail = (modal.dataset.adminEmail || '').toLowerCase();
+    const isAdminAccount = (email || '').toLowerCase() === adminEmail;
+    rolSelect.querySelectorAll('option').forEach(opt => {
+        if (opt.value === 'ADMIN') {
+            opt.hidden = !isAdminAccount;
+            if (!isAdminAccount && rol === 'ADMIN') opt.selected = false;
+        }
+    });
+    rolSelect.value = rol;
+    modal.classList.add('active');
 }
 
 function toggleUser(id, nombre, activo) {
@@ -239,11 +275,59 @@ function resetPwd(id, nombre) {
     document.getElementById('pwdModalUser').textContent = `Usuario: ${nombre}`;
     document.getElementById('pwdForm').action = `/users/${id}/reset-password`;
     document.getElementById('nuevaPwd').value = '';
+    const confirmEl = document.getElementById('nuevaPwdConfirm');
+    if (confirmEl) confirmEl.value = '';
     document.getElementById('pwdModal').classList.add('active');
     document.getElementById('nuevaPwd').focus();
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+// Editar / Toggle / Reset: un solo listener en document para que siga funcionando tras recargar (redirect después de inactivar, etc.)
+document.addEventListener('click', function(e) {
+    var btn = e.target.closest('.btn-edit-user');
+    if (btn) { var d = btn.dataset; editUser(d.id, d.nombre || '', d.email || '', d.rol || ''); return; }
+    btn = e.target.closest('.btn-toggle-user');
+    if (btn) { var d = btn.dataset; toggleUser(d.id, d.nombre || '', d.activo === 'true'); return; }
+    btn = e.target.closest('.btn-reset-pwd');
+    if (btn) { var d = btn.dataset; resetPwd(d.id, d.nombre || ''); }
+});
+
+function applyTableFilters() {
+    try {
+        var filterInput = document.getElementById('tableFilter');
+        var rolSelect = document.getElementById('filterRol');
+        var table = document.getElementById('mainTable');
+        var tableInfo = document.getElementById('tableInfo');
+        var q = (filterInput && filterInput.value || '').trim().toLowerCase();
+        var rolFilter = '';
+        if (rolSelect && rolSelect.options && rolSelect.options.length) {
+            var opt = rolSelect.options[rolSelect.selectedIndex];
+            rolFilter = (opt && opt.value || '').trim().toLowerCase();
+        }
+        var vis = 0;
+        if (!table || !table.tBodies || !table.tBodies[0]) return;
+        var tbody = table.tBodies[0];
+        var rows = tbody.querySelectorAll('tr');
+        for (var i = 0; i < rows.length; i++) {
+            var tr = rows[i];
+            var rolCell = tr.querySelector('td[data-rol]');
+            var rowRol = (rolCell && (rolCell.getAttribute('data-rol') || '').trim() || '').toLowerCase();
+            var rolMatch = !rolFilter || rowRol === rolFilter;
+            var textMatch = !q || (tr.textContent || '').toLowerCase().indexOf(q) !== -1;
+            var show = rolMatch && textMatch;
+            tr.style.display = show ? '' : 'none';
+            if (show) vis++;
+        }
+        if (tableInfo) tableInfo.textContent = vis + ' usuarios';
+    } catch (err) {
+        console.warn('applyTableFilters:', err);
+    }
+}
+
+function setupFilters() {
+    applyTableFilters();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
     // Count-up
     document.querySelectorAll('.count-up').forEach(el => {
         const target = parseInt(el.dataset.target) || 0;
@@ -251,17 +335,42 @@ document.addEventListener('DOMContentLoaded', () => {
         let cur = 0; const step = Math.ceil(target / 30);
         const t = setInterval(() => { cur += step; if (cur >= target) { cur = target; clearInterval(t); } el.textContent = cur; }, 16);
     });
-    // Filter
-    const tf = document.getElementById('tableFilter');
-    if (tf) tf.addEventListener('input', () => {
-        const q = tf.value.toLowerCase();
-        let vis = 0;
-        document.querySelectorAll('#mainTable tbody tr').forEach(r => {
-            const show = r.textContent.toLowerCase().includes(q);
-            r.style.display = show ? '' : 'none';
-            if (show) vis++;
-        });
-        document.getElementById('tableInfo').textContent = `${vis} usuarios`;
+    // Filtro: aplicar al cargar
+    setupFilters();
+    // Delegación en document: así el filtro sigue funcionando después de recargar (p. ej. tras inactivar)
+    document.addEventListener('input', function(e) {
+        if (e.target.id === 'tableFilter' || e.target.id === 'filterRol') {
+            setTimeout(applyTableFilters, 0);
+        }
+    });
+    document.addEventListener('change', function(e) {
+        if (e.target.id === 'tableFilter' || e.target.id === 'filterRol') {
+            setTimeout(applyTableFilters, 0);
+        }
+    });
+    document.addEventListener('blur', function(e) {
+        if (e.target.id === 'filterRol') {
+            applyTableFilters();
+        }
+    }, true);
+
+    // Tras volver a esta página (redirect después de inactivar), reaplicar filtro
+    window.addEventListener('pageshow', function(ev) {
+        if (ev.persisted || document.readyState === 'complete') {
+            setupFilters();
+        }
+    });
+    setTimeout(setupFilters, 100);
+
+    // Confirmación antes de crear usuario
+    var formNew = document.getElementById('formNewUser');
+    if (formNew) formNew.addEventListener('submit', function(ev) {
+        var nombre = (this.nombre && this.nombre.value || '').trim();
+        var rol = (this.rol && this.rol.value || '').trim();
+        if (!nombre || !rol) return;
+        if (!confirm('¿Crear usuario "' + nombre + '" con rol "' + rol + '"?')) {
+            ev.preventDefault();
+        }
     });
 });
 </script>

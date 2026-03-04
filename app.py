@@ -1,6 +1,6 @@
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    flash, jsonify, session, g, make_response,
+    flash, jsonify, session, g, make_response, current_app,
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
@@ -150,6 +150,20 @@ def role_required(*allowed):
     return decorator
 
 
+def admin_only(f):
+    """Solo el rol ADMIN (ej. tecnologia@colbeef.com) puede acceder. Coordinación y otros no."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        user = get_current_user()
+        if user is None:
+            return redirect(url_for("login"))
+        if (user.get("rol") or "").strip() != "ADMIN":
+            flash("Solo el administrador del sistema puede acceder a esta sección.", "error")
+            return redirect(url_for("home"))
+        return f(*args, **kwargs)
+    return decorated
+
+
 # Qué módulos del sidebar/home puede ver cada rol.
 # Claves usadas en base.html y home.html con {{ vm.* }}
 _ROLE_MODULES = {
@@ -162,7 +176,9 @@ _ROLE_MODULES = {
         "eps":          True,   # EPS
         "fondos":       True,   # Fondo de Pensiones
         "reportes":     True,   # Total Hijos, Dashboard
-        "admin":        True,   # Home Setting, Usuarios
+        "dashboard":    True,   # Gráficas (siempre visible para ADMIN)
+        "admin":        True,   # Home Setting, Catálogos, Usuarios (todo)
+        "admin_usuarios": True,
         "permisos":     True,   # Solicitud permiso/licencia
     },
     "COORD. GH": {
@@ -174,8 +190,9 @@ _ROLE_MODULES = {
         "eps":          True,
         "fondos":       True,
         "reportes":     True,
-        "admin":        True,
-        "permisos":     True,
+        "admin":        False,   # Sin Home Setting ni Catálogos
+        "admin_usuarios": True,  # Solo ver usuarios e inactivar
+        "permisos":     True,    # Coordinación aprueba/rechaza permisos
     },
     "GESTOR DE CONTRATACION": {
         "organizacion": False,
@@ -186,7 +203,8 @@ _ROLE_MODULES = {
         "eps":          True,
         "fondos":       True,
         "reportes":     True,
-        "admin":        False,
+        "admin":        False,   # Sin Home Setting ni Catálogos
+        "admin_usuarios": True,  # Ver, crear, editar roles, inactivar (no asignar ADMIN)
         "permisos":     True,
     },
     "BIENESTAR SOCIAL": {
@@ -249,7 +267,7 @@ EMPLEADO_PASSWORD_DEFAULT = "Colbeef2026*"
 _DEFAULT_MODULES = {k: False for k in [
     "organizacion", "personal", "personal_inactivo", "retiro",
     "familia", "eventos", "eps", "fondos",
-    "reportes", "dashboard", "total_hijos", "admin", "permisos",
+    "reportes", "dashboard", "total_hijos", "admin", "admin_usuarios", "permisos",
 ]}
 
 
@@ -934,30 +952,111 @@ def _puede_aprobar_permisos():
     return user and user.get("rol") in ("ADMIN", "COORD. GH")
 
 
+def _permisos_query(filtro_estado=None, buscar=None, area=None, tipo=None, orden=None):
+    """Construye SQL y params para listado de solicitudes (coordinadora)."""
+    sql = (
+        "SELECT p.*, e.apellidos_nombre, e.direccion_email, COALESCE(p.area, e.area) AS area "
+        "FROM solicitud_permiso p JOIN empleado e ON p.id_cedula = e.id_cedula "
+    )
+    params = []
+    where = []
+    if filtro_estado:
+        where.append("p.estado = %s")
+        params.append(filtro_estado)
+    if buscar:
+        where.append("(e.apellidos_nombre LIKE %s OR p.id_cedula LIKE %s)")
+        params.extend(["%{}%".format(buscar.replace("%", "\\%")), "%{}%".format(buscar.replace("%", "\\%"))])
+    if area:
+        where.append("COALESCE(p.area, e.area) = %s")
+        params.append(area)
+    if tipo:
+        where.append("p.tipo = %s")
+        params.append(tipo)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    order = (orden or "").strip().lower()
+    if order == "fecha_desde":
+        sql += " ORDER BY p.fecha_desde ASC, p.fecha_solicitud DESC"
+    elif order == "nombre":
+        sql += " ORDER BY e.apellidos_nombre, p.fecha_solicitud DESC"
+    else:
+        sql += " ORDER BY (p.estado = 'PENDIENTE') DESC, p.fecha_desde ASC, p.fecha_solicitud DESC"
+    return sql, tuple(params)
+
+
 @app.route("/permisos")
 @login_required
 @module_required("permisos")
 def permisos_index():
-    """Listado para coordinadora (aprobar/rechazar) o formulario para solicitar."""
-    if _puede_aprobar_permisos():
-        pendientes = query(
-            "SELECT p.*, e.apellidos_nombre, e.direccion_email "
-            "FROM solicitud_permiso p JOIN empleado e ON p.id_cedula = e.id_cedula "
-            "ORDER BY p.estado = 'PENDIENTE' DESC, p.fecha_solicitud DESC"
-        )
-        for s in pendientes:
-            if s.get("fecha_solicitud"):
-                d = s["fecha_solicitud"]
-                s["fecha_solicitud_str"] = d.strftime("%d/%m/%Y %H:%M") if hasattr(d, "strftime") else str(d)
-            else:
-                s["fecha_solicitud_str"] = ""
-        return render_template(
-            "permisos_list.html",
-            active_page="Solicitud de permiso",
-            solicitudes=pendientes,
-            puede_aprobar=True,
-        )
-    return redirect(url_for("permiso_solicitar"))
+    """Listado para coordinadora (aprobar/rechazar) con filtros y orden."""
+    if not _puede_aprobar_permisos():
+        return redirect(url_for("permiso_solicitar"))
+    filtro_estado = request.args.get("estado", "").strip().upper()
+    if filtro_estado not in ("PENDIENTE", "APROBADO", "RECHAZADO"):
+        filtro_estado = None
+    buscar = request.args.get("buscar", "").strip()
+    area = request.args.get("area", "").strip() or None
+    tipo = request.args.get("tipo", "").strip() or None
+    orden = request.args.get("orden", "").strip() or None
+    sql, params = _permisos_query(filtro_estado=filtro_estado, buscar=buscar, area=area, tipo=tipo, orden=orden)
+    solicitudes = query(sql, params)
+    for s in solicitudes:
+        if s.get("fecha_solicitud"):
+            d = s["fecha_solicitud"]
+            s["fecha_solicitud_str"] = d.strftime("%d/%m/%Y %H:%M") if hasattr(d, "strftime") else str(d)
+        else:
+            s["fecha_solicitud_str"] = ""
+        s["_es_proximo"] = False
+        if s.get("estado") == "PENDIENTE" and s.get("fecha_desde"):
+            fd = s["fecha_desde"]
+            try:
+                hoy = date.today()
+                if hasattr(fd, "date"):
+                    fd_date = fd.date()
+                elif hasattr(fd, "strftime"):
+                    fd_date = fd
+                elif isinstance(fd, str):
+                    fd_date = datetime.strptime(fd[:10], "%Y-%m-%d").date()
+                else:
+                    fd_date = None
+                if fd_date is not None:
+                    delta = (fd_date - hoy).days
+                    s["_es_proximo"] = 0 <= delta <= 7
+            except Exception:
+                pass
+    areas_distinct = query(
+        "SELECT DISTINCT COALESCE(p.area, e.area) AS area FROM solicitud_permiso p "
+        "JOIN empleado e ON p.id_cedula = e.id_cedula WHERE COALESCE(p.area, e.area) IS NOT NULL AND COALESCE(p.area, e.area) != '' ORDER BY 1"
+    )
+    tipos_distinct = query("SELECT DISTINCT tipo FROM solicitud_permiso WHERE tipo IS NOT NULL AND tipo != '' ORDER BY tipo")
+    from urllib.parse import urlencode
+    export_params = {}
+    if filtro_estado:
+        export_params["estado"] = filtro_estado
+    if buscar:
+        export_params["buscar"] = buscar
+    if area:
+        export_params["area"] = area
+    if tipo:
+        export_params["tipo"] = tipo
+    if orden:
+        export_params["orden"] = orden
+    permisos_export_url_full = url_for("permisos_export") + ("?" + urlencode(export_params) if export_params else "")
+    return render_template(
+        "permisos_list.html",
+        active_page="Solicitud de permiso",
+        solicitudes=solicitudes,
+        puede_aprobar=True,
+        filtro_estado=filtro_estado,
+        filtro_buscar=buscar,
+        filtro_area=area,
+        filtro_tipo=tipo,
+        filtro_orden=orden,
+        areas_list=[r["area"] for r in areas_distinct],
+        tipos_list=[r["tipo"] for r in tipos_distinct],
+        permisos_export_url=url_for("permisos_export"),
+        permisos_export_url_full=permisos_export_url_full,
+    )
 
 
 @app.route("/permisos/solicitar", methods=["GET", "POST"])
@@ -1052,11 +1151,14 @@ def permiso_aprobar(id):
     solicitud = query("SELECT * FROM solicitud_permiso WHERE id = %s", (id,), one=True)
     if not solicitud or solicitud["estado"] != "PENDIENTE":
         flash("Solicitud no encontrada o ya fue resuelta.", "error")
+        if _is_api_request() or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify(ok=False, error="Solicitud no encontrada o ya resuelta."), 400
         return redirect(url_for("permisos_index"))
     execute(
         "UPDATE solicitud_permiso SET estado = 'APROBADO', observaciones = %s, resuelto_por = %s, fecha_resolucion = NOW() WHERE id = %s",
         (observaciones, get_current_user()["id_user"], id),
     )
+    registrar_audit("Solicitud aprobada", "permisos", f"id={id} cédula={solicitud.get('id_cedula')}")
     emp = query("SELECT apellidos_nombre, direccion_email FROM empleado WHERE id_cedula = %s", (solicitud["id_cedula"],), one=True)
     correo_ok = notificar_resolucion_permiso(app, solicitud, emp["apellidos_nombre"] if emp else "", emp.get("direccion_email") if emp else "", aprobado=True, observaciones=observaciones)
     try:
@@ -1070,6 +1172,11 @@ def permiso_aprobar(id):
         flash("Solicitud aprobada. Se ha notificado al empleado por correo.", "success")
     else:
         flash("Solicitud aprobada. No se pudo enviar el correo al empleado (revisar consola y MAIL_PASSWORD en .env).", "warning")
+    if _is_api_request() or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        p = query("SELECT COUNT(*) as c FROM solicitud_permiso WHERE estado = 'PENDIENTE'", one=True)["c"]
+        a = query("SELECT COUNT(*) as c FROM solicitud_permiso WHERE estado = 'APROBADO'", one=True)["c"]
+        r = query("SELECT COUNT(*) as c FROM solicitud_permiso WHERE estado = 'RECHAZADO'", one=True)["c"]
+        return jsonify(ok=True, pendientes=p, aprobadas=a, rechazadas=r)
     return redirect(url_for("permisos_index"))
 
 
@@ -1084,11 +1191,14 @@ def permiso_rechazar(id):
     solicitud = query("SELECT * FROM solicitud_permiso WHERE id = %s", (id,), one=True)
     if not solicitud or solicitud["estado"] != "PENDIENTE":
         flash("Solicitud no encontrada o ya fue resuelta.", "error")
+        if _is_api_request() or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return jsonify(ok=False, error="Solicitud no encontrada o ya resuelta."), 400
         return redirect(url_for("permisos_index"))
     execute(
         "UPDATE solicitud_permiso SET estado = 'RECHAZADO', observaciones = %s, resuelto_por = %s, fecha_resolucion = NOW() WHERE id = %s",
         (observaciones, get_current_user()["id_user"], id),
     )
+    registrar_audit("Solicitud rechazada", "permisos", f"id={id} cédula={solicitud.get('id_cedula')}")
     emp = query("SELECT apellidos_nombre, direccion_email FROM empleado WHERE id_cedula = %s", (solicitud["id_cedula"],), one=True)
     correo_ok = notificar_resolucion_permiso(app, solicitud, emp["apellidos_nombre"] if emp else "", emp.get("direccion_email") if emp else "", aprobado=False, observaciones=observaciones)
     try:
@@ -1102,7 +1212,52 @@ def permiso_rechazar(id):
         flash("Solicitud rechazada. Se ha notificado al empleado por correo.", "success")
     else:
         flash("Solicitud rechazada. No se pudo enviar el correo al empleado (revisar consola y MAIL_PASSWORD en .env).", "warning")
+    if _is_api_request() or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        p = query("SELECT COUNT(*) as c FROM solicitud_permiso WHERE estado = 'PENDIENTE'", one=True)["c"]
+        a = query("SELECT COUNT(*) as c FROM solicitud_permiso WHERE estado = 'APROBADO'", one=True)["c"]
+        r = query("SELECT COUNT(*) as c FROM solicitud_permiso WHERE estado = 'RECHAZADO'", one=True)["c"]
+        return jsonify(ok=True, pendientes=p, aprobadas=a, rechazadas=r)
     return redirect(url_for("permisos_index"))
+
+
+PERMISOS_EXPORT_COLUMNS = [
+    ("id_cedula", "Cédula"),
+    ("apellidos_nombre", "Nombre"),
+    ("area", "Área"),
+    ("tipo", "Tipo"),
+    ("fecha_desde", "Fecha desde"),
+    ("fecha_hasta", "Fecha hasta"),
+    ("motivo", "Motivo"),
+    ("estado", "Estado"),
+    ("fecha_solicitud_str", "Fecha solicitud"),
+    ("observaciones", "Observaciones"),
+]
+
+
+@app.route("/permisos/export")
+@login_required
+@module_required("permisos")
+def permisos_export():
+    """Exporta listado de solicitudes de permiso con los mismos filtros que la vista."""
+    if not _puede_aprobar_permisos():
+        flash("No tiene permiso para exportar.", "error")
+        return redirect(url_for("permisos_index"))
+    filtro_estado = request.args.get("estado", "").strip().upper()
+    if filtro_estado not in ("PENDIENTE", "APROBADO", "RECHAZADO"):
+        filtro_estado = None
+    buscar = request.args.get("buscar", "").strip()
+    area = request.args.get("area", "").strip() or None
+    tipo = request.args.get("tipo", "").strip() or None
+    orden = request.args.get("orden", "").strip() or None
+    sql, params = _permisos_query(filtro_estado=filtro_estado, buscar=buscar, area=area, tipo=tipo, orden=orden)
+    rows = query(sql, params)
+    for r in rows:
+        if r.get("fecha_solicitud"):
+            d = r["fecha_solicitud"]
+            r["fecha_solicitud_str"] = d.strftime("%d/%m/%Y %H:%M") if hasattr(d, "strftime") else str(d)
+        else:
+            r["fecha_solicitud_str"] = ""
+    return export_excel_response_generic(rows, PERMISOS_EXPORT_COLUMNS, "Solicitudes_permiso")
 
 
 @app.route("/api/aniversario")
@@ -1213,41 +1368,73 @@ def api_empleado_update(id_cedula):
 @login_required
 @module_required("personal")
 def personal_activo():
-    rows = query(
-        "SELECT id_cedula, apellidos_nombre, tipo_documento, departamento, "
-        "area, sexo, fecha_ingreso, celular, eps, estado "
-        "FROM empleado WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre"
-    )
+    # Solo un modo: inactivos=1 en la URL → inactivos; si no → activos
+    show_inactivos = request.args.get("inactivos", "").strip().lower() in ("1", "true", "yes")
+    show_activos = not show_inactivos
+    if show_inactivos:
+        rows = query(
+            "SELECT id_cedula, apellidos_nombre, tipo_documento, departamento, "
+            "area, sexo, fecha_ingreso, celular, eps, estado "
+            "FROM empleado WHERE estado = 'INACTIVO' ORDER BY apellidos_nombre"
+        )
+        columns = [
+            {"key": "id_cedula",        "label": "Cédula"},
+            {"key": "apellidos_nombre", "label": "Nombre"},
+            {"key": "tipo_documento",   "label": "Tipo Doc"},
+            {"key": "departamento",     "label": "Departamento", "type": "dept"},
+            {"key": "area",             "label": "Área"},
+            {"key": "sexo",             "label": "Sexo", "type": "sex"},
+            {"key": "fecha_ingreso",    "label": "Fecha Ingreso"},
+            {"key": "celular",          "label": "Celular"},
+            {"key": "eps",              "label": "EPS"},
+        ]
+        filter_columns = [
+            {"index": 3, "label": "Departamento"},
+            {"index": 5, "label": "Sexo"},
+            {"index": 8, "label": "EPS"},
+        ]
+    else:
+        rows = query(
+            "SELECT id_cedula, apellidos_nombre, tipo_documento, departamento, "
+            "area, sexo, fecha_ingreso, celular, eps, estado "
+            "FROM empleado WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre"
+        )
+        columns = [
+            {"key": "id_cedula",        "label": "Cédula"},
+            {"key": "apellidos_nombre", "label": "Nombre"},
+            {"key": "tipo_documento",   "label": "Tipo Doc"},
+            {"key": "departamento",     "label": "Departamento", "type": "dept"},
+            {"key": "area",             "label": "Área"},
+            {"key": "sexo",             "label": "Sexo", "type": "sex"},
+            {"key": "fecha_ingreso",    "label": "Fecha Ingreso"},
+            {"key": "celular",          "label": "Celular"},
+            {"key": "eps",              "label": "EPS"},
+        ]
+        filter_columns = [
+            {"index": 3, "label": "Departamento"},
+            {"index": 5, "label": "Sexo"},
+            {"index": 8, "label": "EPS"},
+        ]
     sex_m = sum(1 for r in rows if r.get("sexo") == "M")
     sex_f = sum(1 for r in rows if r.get("sexo") == "F")
     deptos = len(set(r["departamento"] for r in rows if r.get("departamento")))
-    columns = [
-        {"key": "id_cedula",        "label": "Cédula"},
-        {"key": "apellidos_nombre", "label": "Nombre"},
-        {"key": "tipo_documento",   "label": "Tipo Doc"},
-        {"key": "departamento",     "label": "Departamento", "type": "dept"},
-        {"key": "area",             "label": "Área"},
-        {"key": "sexo",             "label": "Sexo", "type": "sex"},
-        {"key": "fecha_ingreso",    "label": "Fecha Ingreso"},
-        {"key": "celular",          "label": "Celular"},
-        {"key": "eps",              "label": "EPS"},
-    ]
+    n_activos = sum(1 for r in rows if r.get("estado") == "ACTIVO")
+    n_inactivos = sum(1 for r in rows if r.get("estado") == "INACTIVO")
     stats = [
-        {"value": len(rows), "label": "Total Activos",   "icon": "group",      "color": "green"},
-        {"value": sex_m,     "label": "Masculino",       "icon": "male",       "color": "blue"},
-        {"value": sex_f,     "label": "Femenino",        "icon": "female",     "color": "purple"},
-        {"value": deptos,    "label": "Departamentos",   "icon": "business",   "color": "orange"},
-    ]
-    filter_columns = [
-        {"index": 3, "label": "Departamento"},
-        {"index": 5, "label": "Sexo"},
-        {"index": 8, "label": "EPS"},
+        {"value": len(rows), "label": "Total",           "icon": "group",      "color": "green"},
+        {"value": n_activos, "label": "Activos",         "icon": "person_check", "color": "green"},
+        {"value": n_inactivos, "label": "Inactivos",     "icon": "person_off", "color": "orange"},
+        {"value": deptos,    "label": "Departamentos",   "icon": "business",   "color": "blue"},
     ]
     return render_template(
         "data_table.html", active_page="Personal Activo",
         rows=rows, columns=columns, stats=stats,
         detail_route="detalle_empleado", pk="id_cedula",
         export_key="personal_activo", filter_columns=filter_columns,
+        personal_tipo_selector=True,
+        personal_show_activos=show_activos,
+        personal_show_inactivos=show_inactivos,
+        personal_activo_url=url_for("personal_activo"),
         show_add_btn=True, add_url=url_for("crear_empleado"),
     )
 
@@ -1610,70 +1797,65 @@ def personal_inactivo():
     )
 
 
-# ── HIJOS ACTIVOS ────────────────────────────────────────────
+# ── HIJOS (ACTIVOS / INACTIVOS) ──────────────────────────────
 
 @app.route("/hijos-activos")
 @login_required
 @module_required("familia")
 def hijos_activos():
+    estado = request.args.get("estado", "ACTIVO").strip().upper()
+    if estado not in ("ACTIVO", "INACTIVO"):
+        estado = "ACTIVO"
     rows = query(
-        "SELECT id_hijo, identificacion_hijo, id_cedula, apellidos_nombre, "
-        "fecha_nacimiento, sexo, estado "
-        "FROM hijo WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre"
+        "SELECT h.id_hijo, h.identificacion_hijo, h.id_cedula, "
+        "e.apellidos_nombre AS nombre_padre, h.apellidos_nombre AS nombre_hijo, "
+        "h.fecha_nacimiento, h.sexo, h.estado "
+        "FROM hijo h "
+        "LEFT JOIN empleado e ON e.id_cedula = h.id_cedula "
+        "WHERE h.estado = %s ORDER BY COALESCE(e.apellidos_nombre, h.id_cedula), h.apellidos_nombre",
+        (estado,),
     )
     sex_m = sum(1 for r in rows if r.get("sexo") == "M")
     sex_f = sum(1 for r in rows if r.get("sexo") == "F")
-    padres = len(set(r["id_cedula"] for r in rows if r.get("id_cedula")))
+    padres_set = set(r["id_cedula"] for r in rows if r.get("id_cedula"))
+    padres = len(padres_set)
+    stats_parent_options = sorted(padres_set) if padres_set else []
     columns = [
-        {"key": "id_cedula",           "label": "Cédula Padre"},
-        {"key": "apellidos_nombre",    "label": "Nombre Hijo"},
+        {"key": "id_cedula",      "label": "Cédula Padre"},
+        {"key": "nombre_padre",   "label": "Nombre Padre"},
+        {"key": "nombre_hijo",    "label": "Nombre Hijo"},
         {"key": "identificacion_hijo", "label": "Identificación"},
-        {"key": "fecha_nacimiento",    "label": "Fecha Nacimiento"},
-        {"key": "sexo",                "label": "Sexo", "type": "sex"},
+        {"key": "fecha_nacimiento",   "label": "Fecha Nacimiento"},
+        {"key": "sexo",           "label": "Sexo", "type": "sex"},
     ]
+    base_label = "Hijos Activos" if estado == "ACTIVO" else "Hijos Inactivos"
+    base_icon = "child_care" if estado == "ACTIVO" else "child_friendly"
+    base_color = "green" if estado == "ACTIVO" else "orange"
     stats = [
-        {"value": len(rows), "label": "Hijos Activos",    "icon": "child_care",      "color": "green"},
-        {"value": sex_m,     "label": "Niños",            "icon": "male",            "color": "blue"},
-        {"value": sex_f,     "label": "Niñas",            "icon": "female",          "color": "purple"},
-        {"value": padres,    "label": "Empleados Padres", "icon": "family_restroom", "color": "orange"},
+        {"value": len(rows), "label": base_label,         "icon": base_icon,        "color": base_color, "filter": {"col": "sexo", "value": None}},
+        {"value": sex_m,     "label": "Niños",            "icon": "male",           "color": "blue",     "filter": {"col": "sexo", "value": "M"}},
+        {"value": sex_f,     "label": "Niñas",            "icon": "female",         "color": "purple",   "filter": {"col": "sexo", "value": "F"}},
+        {"value": padres,    "label": "Empleados Padres", "icon": "family_restroom","color": "orange",   "filter": {"col": "id_cedula", "value": "__parent__"}},
     ]
+    active_page = "Hijos Activos" if estado == "ACTIVO" else "Hijos Inactivos"
+    export_key = "hijos_activos" if estado == "ACTIVO" else "hijos_inactivos"
     return render_template(
-        "data_table.html", active_page="Hijos Activos",
+        "data_table.html", active_page=active_page,
         rows=rows, columns=columns, stats=stats,
-        export_key="hijos_activos",
+        stats_parent_options=stats_parent_options,
+        export_key=export_key,
+        hijos_estado_selector=True,
+        hijos_estado_actual=estado,
+        hijos_base_url=url_for("hijos_activos"),
     )
 
-
-# ── HIJOS INACTIVOS ──────────────────────────────────────────
 
 @app.route("/hijos-inactivos")
 @login_required
 @module_required("familia")
 def hijos_inactivos():
-    rows = query(
-        "SELECT id_hijo, identificacion_hijo, id_cedula, apellidos_nombre, "
-        "fecha_nacimiento, sexo, estado "
-        "FROM hijo WHERE estado = 'INACTIVO' ORDER BY apellidos_nombre"
-    )
-    sex_m = sum(1 for r in rows if r.get("sexo") == "M")
-    sex_f = sum(1 for r in rows if r.get("sexo") == "F")
-    columns = [
-        {"key": "id_cedula",           "label": "Cédula Padre"},
-        {"key": "apellidos_nombre",    "label": "Nombre Hijo"},
-        {"key": "identificacion_hijo", "label": "Identificación"},
-        {"key": "fecha_nacimiento",    "label": "Fecha Nacimiento"},
-        {"key": "sexo",                "label": "Sexo", "type": "sex"},
-    ]
-    stats = [
-        {"value": len(rows), "label": "Hijos Inactivos",  "icon": "child_friendly", "color": "orange"},
-        {"value": sex_m,     "label": "Niños",            "icon": "male",           "color": "blue"},
-        {"value": sex_f,     "label": "Niñas",            "icon": "female",         "color": "purple"},
-    ]
-    return render_template(
-        "data_table.html", active_page="Hijos Inactivos",
-        rows=rows, columns=columns, stats=stats,
-        export_key="hijos_inactivos",
-    )
+    # Redirige a la vista unificada con el estado INACTIVO seleccionado
+    return redirect(url_for("hijos_activos", estado="INACTIVO"))
 
 
 # ── RETIRO DE PERSONAL ───────────────────────────────────────
@@ -2539,24 +2721,64 @@ def fondo_eliminar(fondo_name):
     return redirect(url_for("view_fondos"))
 
 
-# ── USUARIOS (solo ADMIN) ────────────────────────────────────
+# ── USUARIOS (ADMIN full; COORD. GH ver+inactivar; GESTOR CONTRATACIÓN ver+crear+editar roles+inactivar) ───
+
+_ROLES_CAN_CREATE_EDIT_RESET = ("ADMIN", "GESTOR DE CONTRATACION")
+_ROLES_CAN_TOGGLE = ("ADMIN", "COORD. GH", "GESTOR DE CONTRATACION")
+
+
+def _user_management_allowed(action):
+    """action in ('create', 'edit', 'toggle', 'reset')."""
+    user = get_current_user()
+    if not user:
+        return False
+    rol = (user.get("rol") or "").strip()
+    if action == "toggle":
+        return rol in _ROLES_CAN_TOGGLE
+    if action in ("create", "edit", "reset"):
+        return rol in _ROLES_CAN_CREATE_EDIT_RESET
+    return False
+
+
+def _validar_password(password):
+    """Exige mínimo 8 caracteres, al menos una letra y un número. Devuelve (True, None) o (False, mensaje)."""
+    if len(password) < 8:
+        return False, "La contraseña debe tener al menos 8 caracteres"
+    if not any(c.isalpha() for c in password):
+        return False, "La contraseña debe contener al menos una letra"
+    if not any(c.isdigit() for c in password):
+        return False, "La contraseña debe contener al menos un número"
+    return True, None
+
 
 @app.route("/users/nuevo", methods=["POST"])
 @login_required
-@module_required("admin")
-@role_required("ALL")
+@module_required("admin_usuarios")
 def usuario_nuevo():
+    if not _user_management_allowed("create"):
+        flash("No tienes permiso para crear usuarios.", "error")
+        return redirect(url_for("usuarios"))
     nombre   = (request.form.get("nombre")   or "").strip().upper()
     email    = (request.form.get("email")    or "").strip().lower()
     password = (request.form.get("password") or "").strip()
+    confirm  = (request.form.get("confirmar_password") or "").strip()
     rol      = (request.form.get("rol")      or "").strip()
 
     if not all([nombre, email, password, rol]):
         flash("Todos los campos son obligatorios", "error")
         return redirect(url_for("usuarios"))
 
-    if len(password) < 6:
-        flash("La contraseña debe tener mínimo 6 caracteres", "error")
+    if rol == "ADMIN":
+        flash("No se puede crear un usuario con rol ADMIN. Ese rol está reservado.", "error")
+        return redirect(url_for("usuarios"))
+
+    if password != confirm:
+        flash("La contraseña y su confirmación no coinciden", "error")
+        return redirect(url_for("usuarios"))
+
+    ok, msg = _validar_password(password)
+    if not ok:
+        flash(msg, "error")
         return redirect(url_for("usuarios"))
 
     existing = query("SELECT id_user FROM usuario WHERE LOWER(email) = %s", (email,), one=True)
@@ -2574,20 +2796,40 @@ def usuario_nuevo():
         (new_id, email, generate_password_hash(password),
          nombre, rol, True, get_acciones_for_rol(rol)),
     )
+    registrar_audit("Usuario creado", "admin", f"id={new_id} rol={rol}")
     flash(f"Usuario {nombre} creado correctamente (ID: {new_id})", "success")
     return redirect(url_for("usuarios"))
 
 
+_ROLE_DESCRIPTIONS = {
+    "ADMIN": "Administrador del sistema",
+    "COORD. GH": "Coordinación Gestión Humana",
+    "EMPLEADO": "Empleado (portal y solicitudes)",
+    "GESTOR DE CONTRATACION": "Gestor de Contratación",
+    "GESTOR DE NOMINA": "Gestor de Nómina",
+    "GESTOR SST": "Gestor SST",
+    "BIENESTAR SOCIAL": "Bienestar Social",
+}
+
+
 @app.route("/users")
 @login_required
-@module_required("admin")
-@role_required("ALL")
+@module_required("admin_usuarios")
 def usuarios():
     roles = query("SELECT nombre FROM rol ORDER BY nombre")
     rows = query(
         "SELECT id_user, email, nombre, rol, estado, acciones FROM usuario ORDER BY id_user"
     )
     activos = sum(1 for r in rows if r.get("estado"))
+    roles_con_desc = [{"nombre": r["nombre"], "desc": _ROLE_DESCRIPTIONS.get(r["nombre"], "")} for r in roles]
+    roles_crear = [r for r in roles_con_desc if r["nombre"] != "ADMIN"]
+    admin_email = current_app.config.get("ADMIN_EMAIL", "tecnologia@colbeef.com").strip().lower()
+    user = get_current_user()
+    rol = (user.get("rol") or "").strip()
+    can_create = rol in _ROLES_CAN_CREATE_EDIT_RESET
+    can_edit = rol in _ROLES_CAN_CREATE_EDIT_RESET
+    can_toggle = rol in _ROLES_CAN_TOGGLE
+    can_reset = rol in _ROLES_CAN_CREATE_EDIT_RESET
     columns = [
         {"key": "id_user",  "label": "ID"},
         {"key": "email",    "label": "Email"},
@@ -2602,18 +2844,35 @@ def usuarios():
     ]
     return render_template(
         "users.html", active_page="User",
-        rows=rows, columns=columns, stats=stats, roles=roles,
+        rows=rows, columns=columns, stats=stats, roles=roles, roles_con_desc=roles_con_desc,
+        roles_crear=roles_crear, admin_email=admin_email,
+        can_create=can_create, can_edit=can_edit, can_toggle=can_toggle, can_reset=can_reset,
     )
 
 
 @app.route("/users/<id>/editar", methods=["POST"])
 @login_required
-@module_required("admin")
-@role_required("ALL")
+@module_required("admin_usuarios")
 def usuario_editar(id):
+    if not _user_management_allowed("edit"):
+        flash("No tienes permiso para editar usuarios.", "error")
+        return redirect(url_for("usuarios"))
     nombre = (request.form.get("nombre") or "").strip().upper()
     email = (request.form.get("email") or "").strip().lower()
     rol = (request.form.get("rol") or "").strip()
+    admin_email = current_app.config.get("ADMIN_EMAIL", "tecnologia@colbeef.com").strip().lower()
+
+    # Solo el usuario con ADMIN_EMAIL puede tener rol ADMIN
+    if rol == "ADMIN" and email != admin_email:
+        flash("El rol ADMIN solo puede asignarse al usuario autorizado (tecnología).", "error")
+        return redirect(url_for("usuarios"))
+
+    # No se puede quitar ADMIN al usuario autorizado
+    actual = query("SELECT email, rol FROM usuario WHERE id_user = %s", (id,), one=True)
+    if actual and (actual.get("email") or "").strip().lower() == admin_email and rol != "ADMIN":
+        flash("No se puede quitar el rol ADMIN a la cuenta de tecnología.", "error")
+        return redirect(url_for("usuarios"))
+
     execute(
         "UPDATE usuario SET nombre=%s, email=%s, rol=%s, acciones=%s WHERE id_user=%s",
         (nombre, email, rol, get_acciones_for_rol(rol), id),
@@ -2624,9 +2883,11 @@ def usuario_editar(id):
 
 @app.route("/users/<id>/toggle-estado", methods=["POST"])
 @login_required
-@module_required("admin")
-@role_required("ALL")
+@module_required("admin_usuarios")
 def usuario_toggle_estado(id):
+    if not _user_management_allowed("toggle"):
+        flash("No tienes permiso para activar/desactivar usuarios.", "error")
+        return redirect(url_for("usuarios"))
     user = query("SELECT estado, nombre FROM usuario WHERE id_user=%s", (id,), one=True)
     if not user:
         flash("Usuario no encontrado", "error")
@@ -2640,12 +2901,19 @@ def usuario_toggle_estado(id):
 
 @app.route("/users/<id>/reset-password", methods=["POST"])
 @login_required
-@module_required("admin")
-@role_required("ALL")
+@module_required("admin_usuarios")
 def usuario_reset_password(id):
+    if not _user_management_allowed("reset"):
+        flash("No tienes permiso para restablecer contraseñas.", "error")
+        return redirect(url_for("usuarios"))
     nueva = (request.form.get("nueva_password") or "").strip()
-    if len(nueva) < 6:
-        flash("La contraseña debe tener mínimo 6 caracteres", "error")
+    confirm = (request.form.get("confirmar_password") or "").strip()
+    if nueva != confirm:
+        flash("La contraseña y su confirmación no coinciden", "error")
+        return redirect(url_for("usuarios"))
+    ok, msg = _validar_password(nueva)
+    if not ok:
+        flash(msg, "error")
         return redirect(url_for("usuarios"))
     execute(
         "UPDATE usuario SET password_hash=%s WHERE id_user=%s",
@@ -2661,6 +2929,7 @@ def usuario_reset_password(id):
 @login_required
 @module_required("admin")
 @role_required("ALL")
+@admin_only
 def admin_catalogos():
     """Lista y permite agregar registros a catálogos usados en empleados y retiros."""
     tipo_doc = query("SELECT id_tipo_documento, tipo_documento FROM tipo_documento ORDER BY tipo_documento")
@@ -2677,6 +2946,7 @@ def admin_catalogos():
 @login_required
 @module_required("admin")
 @role_required("ALL")
+@admin_only
 def catalogos_tipo_documento_add():
     sigla = (request.form.get("id_tipo_documento") or "").strip().upper()[:50]
     nombre = (request.form.get("tipo_documento") or "").strip()
@@ -2696,6 +2966,7 @@ def catalogos_tipo_documento_add():
 @login_required
 @module_required("admin")
 @role_required("ALL")
+@admin_only
 def catalogos_nivel_add():
     sigla = (request.form.get("id_nivel") or "").strip().upper()[:50]
     nombre = (request.form.get("nivel") or "").strip()
@@ -2715,6 +2986,7 @@ def catalogos_nivel_add():
 @login_required
 @module_required("admin")
 @role_required("ALL")
+@admin_only
 def catalogos_profesion_add():
     id_prof = (request.form.get("id_profesion") or "").strip()[:100]
     nombre = (request.form.get("profesion") or "").strip()
@@ -2737,6 +3009,7 @@ def catalogos_profesion_add():
 @login_required
 @module_required("admin")
 @role_required("ALL")
+@admin_only
 def catalogos_motivo_retiro_add():
     tipo_retiro = (request.form.get("tipo_retiro") or "").strip()
     if not tipo_retiro:
@@ -2796,6 +3069,25 @@ def view_total_hijos():
 
 # ── GENERIC EXPORT ────────────────────────────────────────────
 
+def _parse_export_date(val):
+    """Convierte valor de celda a date para filtrar exportación. Acepta date, str YYYY-MM-DD o DD/MM/YYYY."""
+    if val is None:
+        return None
+    if isinstance(val, date):
+        return val
+    if isinstance(val, datetime):
+        return val.date()
+    s = str(val).strip()
+    if not s:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 EXPORT_CONFIGS = {
     "personal_activo": {
         "sql": "SELECT id_cedula, apellidos_nombre, tipo_documento, departamento, area, sexo, fecha_ingreso, celular, eps, estado FROM empleado WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre",
@@ -2805,6 +3097,7 @@ EXPORT_CONFIGS = {
             ("fecha_ingreso", "Fecha Ingreso"), ("celular", "Celular"), ("eps", "EPS"), ("estado", "Estado"),
         ],
         "prefix": "Personal_Activo",
+        "date_column": "fecha_ingreso",
     },
     "personal_inactivo": {
         "sql": "SELECT id_cedula, apellidos_nombre, tipo_documento, departamento, area, sexo, fecha_ingreso, celular, eps, estado FROM empleado WHERE estado = 'INACTIVO' ORDER BY apellidos_nombre",
@@ -2814,24 +3107,37 @@ EXPORT_CONFIGS = {
             ("fecha_ingreso", "Fecha Ingreso"), ("celular", "Celular"), ("eps", "EPS"), ("estado", "Estado"),
         ],
         "prefix": "Personal_Inactivo",
+        "date_column": "fecha_ingreso",
     },
     "hijos_activos": {
-        "sql": "SELECT id_hijo, identificacion_hijo, id_cedula, apellidos_nombre, fecha_nacimiento, sexo, estado FROM hijo WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre",
+        "sql": (
+            "SELECT h.id_cedula, e.apellidos_nombre AS nombre_padre, h.apellidos_nombre AS nombre_hijo, "
+            "h.identificacion_hijo, h.fecha_nacimiento, h.sexo, h.estado "
+            "FROM hijo h LEFT JOIN empleado e ON e.id_cedula = h.id_cedula "
+            "WHERE h.estado = 'ACTIVO' ORDER BY e.apellidos_nombre, h.apellidos_nombre"
+        ),
         "columns": [
-            ("id_cedula", "Cédula Padre"), ("apellidos_nombre", "Nombre Hijo"),
+            ("id_cedula", "Cédula Padre"), ("nombre_padre", "Nombre Padre"), ("nombre_hijo", "Nombre Hijo"),
             ("identificacion_hijo", "Identificación"), ("fecha_nacimiento", "Fecha Nacimiento"),
             ("sexo", "Sexo"), ("estado", "Estado"),
         ],
         "prefix": "Hijos_Activos",
+        "date_column": "fecha_nacimiento",
     },
     "hijos_inactivos": {
-        "sql": "SELECT id_hijo, identificacion_hijo, id_cedula, apellidos_nombre, fecha_nacimiento, sexo, estado FROM hijo WHERE estado = 'INACTIVO' ORDER BY apellidos_nombre",
+        "sql": (
+            "SELECT h.id_cedula, e.apellidos_nombre AS nombre_padre, h.apellidos_nombre AS nombre_hijo, "
+            "h.identificacion_hijo, h.fecha_nacimiento, h.sexo, h.estado "
+            "FROM hijo h LEFT JOIN empleado e ON e.id_cedula = h.id_cedula "
+            "WHERE h.estado = 'INACTIVO' ORDER BY e.apellidos_nombre, h.apellidos_nombre"
+        ),
         "columns": [
-            ("id_cedula", "Cédula Padre"), ("apellidos_nombre", "Nombre Hijo"),
+            ("id_cedula", "Cédula Padre"), ("nombre_padre", "Nombre Padre"), ("nombre_hijo", "Nombre Hijo"),
             ("identificacion_hijo", "Identificación"), ("fecha_nacimiento", "Fecha Nacimiento"),
             ("sexo", "Sexo"), ("estado", "Estado"),
         ],
         "prefix": "Hijos_Inactivos",
+        "date_column": "fecha_nacimiento",
     },
     "retiro_personal": {
         "sql": "SELECT id_retiro, id_cedula, apellidos_nombre, departamento, area, fecha_ingreso, fecha_retiro, dias_laborados, tipo_retiro FROM retirado ORDER BY fecha_retiro DESC",
@@ -2841,6 +3147,7 @@ EXPORT_CONFIGS = {
             ("dias_laborados", "Días Laborados"), ("tipo_retiro", "Tipo Retiro"),
         ],
         "prefix": "Retiro_Personal",
+        "date_column": "fecha_retiro",
     },
     "departamentos": {
         "sql": "SELECT nombre, presupuestados FROM departamento ORDER BY nombre",
@@ -2884,7 +3191,39 @@ def generic_export(page_key):
         flash("Exportación no disponible", "error")
         return redirect(url_for("home"))
     rows = query(cfg["sql"])
+    date_col = cfg.get("date_column")
+    desde_str = request.args.get("desde", "").strip()
+    hasta_str = request.args.get("hasta", "").strip()
+    if date_col and (desde_str or hasta_str):
+        desde = _parse_export_date(desde_str) if desde_str else None
+        hasta = _parse_export_date(hasta_str) if hasta_str else None
+        filtered = []
+        for r in rows:
+            cell_date = _parse_export_date(r.get(date_col))
+            if cell_date is None:
+                continue
+            if desde and cell_date < desde:
+                continue
+            if hasta and cell_date > hasta:
+                continue
+            filtered.append(r)
+        rows = filtered
     return export_excel_response_generic(rows, cfg["columns"], cfg["prefix"])
+
+
+# ── TELEMETRÍA / AUDITORÍA (reportes empresariales) ─────────────
+
+def registrar_audit(accion, modulo=None, detalle=None):
+    """Registra una acción en audit_log para telemetría y reportes."""
+    try:
+        user = get_current_user()
+        id_user = (user.get("id_user") if user else None) or ""
+        execute(
+            "INSERT INTO audit_log (id_user, accion, modulo, detalle) VALUES (%s, %s, %s, %s)",
+            (id_user[:50] if id_user else None, accion[:100], (modulo or "")[:80], (detalle or "")[:500]),
+        )
+    except Exception:
+        pass  # Si no existe la tabla o falla, no romper el flujo
 
 
 # ── DASHBOARD ─────────────────────────────────────────────────
@@ -2953,6 +3292,55 @@ def enrich_retirados(rows):
     return rows
 
 
+def _get_retiros_por_mes():
+    """Últimos 12 meses con cantidad de retiros (para gráfica de barras)."""
+    from datetime import datetime, date
+    try:
+        end = date.today()
+        rows = query(
+            "SELECT YEAR(fecha_retiro) AS y, MONTH(fecha_retiro) AS m, COUNT(*) AS cnt "
+            "FROM retirado WHERE fecha_retiro >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH) "
+            "GROUP BY y, m ORDER BY y, m",
+        )
+        by_month = {(r["y"], r["m"]): int(r["cnt"]) for r in rows}
+        labels = []
+        values = []
+        meses_nombres = ("Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic")
+        for i in range(11, -1, -1):
+            d = date(end.year, end.month, 1)
+            for _ in range(i):
+                if d.month == 1:
+                    d = date(d.year - 1, 12, 1)
+                else:
+                    d = date(d.year, d.month - 1, 1)
+            labels.append(meses_nombres[d.month - 1] + " " + str(d.year))
+            values.append(by_month.get((d.year, d.month), 0))
+        labels.reverse()
+        values.reverse()
+        return labels, values
+    except Exception:
+        return [], []
+
+
+def _get_actividad_reciente(limite=10):
+    """Últimas acciones registradas en audit_log (telemetría)."""
+    try:
+        rows = query(
+            "SELECT id_user, accion, modulo, detalle, fecha_hora FROM audit_log "
+            "ORDER BY fecha_hora DESC LIMIT %s",
+            (limite,),
+        )
+        for r in rows or []:
+            fh = r.get("fecha_hora")
+            if hasattr(fh, "strftime"):
+                r["fecha_str"] = fh.strftime("%d/%m %H:%M")
+            else:
+                r["fecha_str"] = str(fh)[:16] if fh else "—"
+        return rows or []
+    except Exception:
+        return []
+
+
 @app.route("/view-total-personal")
 @login_required
 @module_required("dashboard")
@@ -2968,9 +3356,54 @@ def view_total_personal():
             "labels": labels,
             "values": values,
         }
+
+    # KPIs nivel empresarial
+    try:
+        kpi_activos = query("SELECT COUNT(*) AS c FROM empleado WHERE estado = 'ACTIVO'", one=True)["c"]
+    except Exception:
+        kpi_activos = 0
+    try:
+        from datetime import date
+        hoy = date.today()
+        kpi_retiros_mes = query(
+            "SELECT COUNT(*) AS c FROM retirado WHERE YEAR(fecha_retiro)=%s AND MONTH(fecha_retiro)=%s",
+            (hoy.year, hoy.month), one=True,
+        )["c"]
+    except Exception:
+        kpi_retiros_mes = 0
+    try:
+        kpi_solicitudes_pend = query(
+            "SELECT COUNT(*) AS c FROM solicitud_permiso WHERE estado = 'PENDIENTE'",
+            one=True,
+        )["c"]
+    except Exception:
+        kpi_solicitudes_pend = 0
+    try:
+        from datetime import date
+        hoy = date.today()
+        kpi_resueltas_hoy = query(
+            "SELECT COUNT(*) AS c FROM solicitud_permiso WHERE DATE(fecha_resolucion) = %s AND estado IN ('APROBADO','RECHAZADO')",
+            (hoy,), one=True,
+        )["c"]
+    except Exception:
+        kpi_resueltas_hoy = 0
+
+    retiros_mes_labels, retiros_mes_values = _get_retiros_por_mes()
+    actividad_reciente = _get_actividad_reciente(10)
+    from datetime import datetime
+    ultima_actualizacion = datetime.now().strftime("%d/%m/%Y %H:%M")
+
     return render_template(
         "dashboard.html", active_page="Dashboard",
         charts_data=charts_data,
+        kpi_activos=kpi_activos,
+        kpi_retiros_mes=kpi_retiros_mes,
+        kpi_solicitudes_pend=kpi_solicitudes_pend,
+        kpi_resueltas_hoy=kpi_resueltas_hoy,
+        retiros_mes_labels=retiros_mes_labels,
+        retiros_mes_values=retiros_mes_values,
+        actividad_reciente=actividad_reciente,
+        ultima_actualizacion=ultima_actualizacion,
     )
 
 
@@ -3082,6 +3515,7 @@ def dashboard_export(chart_key):
 @login_required
 @module_required("admin")
 @role_required("ALL")
+@admin_only
 def home_setting():
     rows = query("SELECT * FROM menu ORDER BY nombre")
     columns = [

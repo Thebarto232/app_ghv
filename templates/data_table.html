@@ -3,7 +3,7 @@
 {% block page_actions %}
 <div style="display:flex;align-items:center;gap:8px">
     {% if export_key is defined and export_key %}
-    <a href="{{ url_for('generic_export', page_key=export_key) }}" class="btn btn-outline btn-sm" title="Exportar a Excel" onclick="return confirmGenericExport(event, this.href)">
+    <a href="{{ url_for('generic_export', page_key=export_key) }}" class="btn btn-outline btn-sm" title="Exportar a Excel" id="btnExportExcel" data-export-base="{{ url_for('generic_export', page_key=export_key) }}" onclick="return confirmGenericExport(event)">
         <span class="material-symbols-outlined" style="font-size:18px;color:var(--colbeef-green)">download</span>
         Exportar
     </a>
@@ -17,10 +17,82 @@
 {% endblock %}
 
 {% block content %}
+{% if personal_tipo_selector is defined and personal_tipo_selector %}
+<div class="personal-tipo-bar">
+    <div class="personal-tipo-checklist">
+        <label class="personal-tipo-check-item">
+            <input type="checkbox" id="personalCheckActivos" {{ 'checked' if personal_show_activos else '' }} data-role="activos">
+            <span class="personal-tipo-checkbox"></span>
+            <span class="personal-tipo-check-label">Activos</span>
+        </label>
+        <label class="personal-tipo-check-item">
+            <input type="checkbox" id="personalCheckInactivos" {{ 'checked' if personal_show_inactivos else '' }} data-role="inactivos">
+            <span class="personal-tipo-checkbox"></span>
+            <span class="personal-tipo-check-label">Inactivos</span>
+        </label>
+    </div>
+    <span class="personal-tipo-hint">Marca solo uno: Activos o Inactivos.</span>
+</div>
+<script>
+(function() {
+    var base = {{ (personal_activo_url or '')|tojson }};
+    function applyPersonalFilter(ev) {
+        var ckActivos = document.getElementById('personalCheckActivos');
+        var ckInactivos = document.getElementById('personalCheckInactivos');
+        if (ev.target.id === 'personalCheckActivos') {
+            ckInactivos.checked = false;
+            window.location = base + (ckActivos.checked ? '?activos=1' : '?inactivos=1');
+        } else {
+            ckActivos.checked = false;
+            window.location = base + (ckInactivos.checked ? '?inactivos=1' : '?activos=1');
+        }
+    }
+    document.getElementById('personalCheckActivos').addEventListener('change', applyPersonalFilter);
+    document.getElementById('personalCheckInactivos').addEventListener('change', applyPersonalFilter);
+})();
+</script>
+{% endif %}
+{% if hijos_estado_selector is defined and hijos_estado_selector %}
+<div class="personal-tipo-bar">
+    <div class="personal-tipo-checklist">
+        <label class="personal-tipo-check-item">
+            <input type="checkbox" id="hijosCheckActivos" {{ 'checked' if hijos_estado_actual == 'ACTIVO' else '' }}>
+            <span class="personal-tipo-checkbox"></span>
+            <span class="personal-tipo-check-label">Hijos activos</span>
+        </label>
+        <label class="personal-tipo-check-item">
+            <input type="checkbox" id="hijosCheckInactivos" {{ 'checked' if hijos_estado_actual == 'INACTIVO' else '' }}>
+            <span class="personal-tipo-checkbox"></span>
+            <span class="personal-tipo-check-label">Hijos inactivos</span>
+        </label>
+    </div>
+    <span class="personal-tipo-hint">Marca solo uno: Hijos activos o inactivos.</span>
+</div>
+<script>
+(function() {
+    var base = {{ (hijos_base_url or '')|tojson }};
+    function applyHijosEstado(ev) {
+        var ckAct = document.getElementById('hijosCheckActivos');
+        var ckInact = document.getElementById('hijosCheckInactivos');
+        if (ev.target.id === 'hijosCheckActivos') {
+            ckInact.checked = false;
+            window.location = base + (ckAct.checked ? '?estado=ACTIVO' : '?estado=INACTIVO');
+        } else {
+            ckAct.checked = false;
+            window.location = base + (ckInact.checked ? '?estado=INACTIVO' : '?estado=ACTIVO');
+        }
+    }
+    document.getElementById('hijosCheckActivos').addEventListener('change', applyHijosEstado);
+    document.getElementById('hijosCheckInactivos').addEventListener('change', applyHijosEstado);
+})();
+</script>
+{% endif %}
 {% if stats|default(none) %}
-<div class="stats-grid animate-in">
+<div class="stats-grid animate-in" id="statsGrid">
     {% for stat in stats %}
-    <div class="stat-card" style="animation-delay:{{ loop.index0 * 80 }}ms">
+    <div class="stat-card {% if stat.filter is defined and stat.filter %}stat-card-clickable{% endif %}"
+         style="animation-delay:{{ loop.index0 * 80 }}ms"
+         {% if stat.filter is defined and stat.filter %}data-filter-col="{{ stat.filter.col }}" data-filter-value="{{ stat.filter.value if stat.filter.value is not none else '' }}" role="button" tabindex="0"{% endif %}>
         <div class="stat-icon {{ stat.color }}">
             <span class="material-symbols-outlined">{{ stat.icon }}</span>
         </div>
@@ -31,6 +103,17 @@
     </div>
     {% endfor %}
 </div>
+{% if stats_parent_options is defined and stats_parent_options %}
+<div class="stats-extra-filter">
+    <label for="parentFilterSelect" class="stats-extra-label">Filtrar por cédula del padre:</label>
+    <select id="parentFilterSelect" class="form-input form-input-sm">
+        <option value="">Todos los padres</option>
+        {% for cedula in stats_parent_options %}
+        <option value="{{ cedula }}">{{ cedula }}</option>
+        {% endfor %}
+    </select>
+</div>
+{% endif %}
 {% endif %}
 
 <div class="table-toolbar">
@@ -41,11 +124,14 @@
         </div>
         {% if filter_columns is defined and filter_columns %}
         <div class="column-filter">
-            <select id="columnFilter">
+            <select id="columnFilter" title="Columna para filtrar">
                 <option value="">Todas las columnas</option>
                 {% for fc in filter_columns %}
                 <option value="{{ fc.index }}">{{ fc.label }}</option>
                 {% endfor %}
+            </select>
+            <select id="columnValueFilter" title="Filtrar por valor" style="display:none; margin-left:6px; min-width:140px;">
+                <option value="">— Todos —</option>
             </select>
         </div>
         {% endif %}
@@ -69,7 +155,7 @@
         <thead>
             <tr>
                 {% for col in columns %}
-                <th data-sort data-col-idx="{{ loop.index0 }}">{{ col.label }}<span class="material-symbols-outlined sort-icon">unfold_more</span></th>
+                <th data-sort data-col-idx="{{ loop.index0 }}" data-col-key="{{ col.key }}">{{ col.label }}<span class="material-symbols-outlined sort-icon">unfold_more</span></th>
                 {% endfor %}
                 {% if detail_route is defined and detail_route %}
                 <th style="width:50px"></th>
@@ -161,19 +247,29 @@
                 <span class="material-symbols-outlined" style="font-size:22px;color:var(--primary)">download</span>
                 Exportar a Excel
             </h2>
-            <button class="btn-icon" onclick="document.getElementById('genericExportModal').classList.remove('active')">
+            <button type="button" class="btn-icon" onclick="document.getElementById('genericExportModal').classList.remove('active')">
                 <span class="material-symbols-outlined">close</span>
             </button>
         </div>
-        <div style="padding:4px 0 20px;color:var(--text-secondary);font-size:14px;display:flex;align-items:center;gap:10px">
+        <div style="padding:4px 0 12px;color:var(--text-secondary);font-size:14px;display:flex;align-items:flex-start;gap:10px">
             <span class="material-symbols-outlined" style="font-size:36px;color:#22c55e;flex-shrink:0">table_chart</span>
-            <span>Se generará un archivo <strong>.xlsx</strong> con todos los registros actualmente visibles en la tabla.</span>
+            <span>Se generará un archivo <strong>.xlsx</strong>. Opcionalmente filtre por rango de fechas (según el informe: ingreso, nacimiento, retiro, etc.).</span>
+        </div>
+        <div class="export-date-range">
+            <div class="form-group">
+                <label class="form-label" for="exportDesde">Desde</label>
+                <input type="date" id="exportDesde" class="form-input" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label class="form-label" for="exportHasta">Hasta</label>
+                <input type="date" id="exportHasta" class="form-input" autocomplete="off">
+            </div>
         </div>
         <div class="form-actions" style="border-top:1px solid var(--border);padding-top:16px">
-            <a href="#" class="btn btn-primary" id="genericExportLink" onclick="document.getElementById('genericExportModal').classList.remove('active')">
+            <button type="button" class="btn btn-primary" id="genericExportBtn" onclick="applyExportWithDates()">
                 <span class="material-symbols-outlined" style="font-size:18px">download</span> Exportar
-            </a>
-            <button class="btn btn-outline" onclick="document.getElementById('genericExportModal').classList.remove('active')">Cancelar</button>
+            </button>
+            <button type="button" class="btn btn-outline" onclick="document.getElementById('genericExportModal').classList.remove('active')">Cancelar</button>
         </div>
     </div>
 </div>
@@ -181,14 +277,34 @@
 
 {% block scripts %}
 <script>
-function confirmGenericExport(e, url) {
-    e.preventDefault();
-    document.getElementById('genericExportLink').href = url;
-    document.getElementById('genericExportModal').classList.add('active');
+function confirmGenericExport(e) {
+    if (e) e.preventDefault();
+    var btn = document.getElementById('btnExportExcel');
+    var modal = document.getElementById('genericExportModal');
+    if (btn) modal.dataset.exportBase = btn.getAttribute('data-export-base') || btn.href || '';
+    document.getElementById('exportDesde').value = '';
+    document.getElementById('exportHasta').value = '';
+    modal.classList.add('active');
     return false;
+}
+function applyExportWithDates() {
+    var modal = document.getElementById('genericExportModal');
+    var base = modal.dataset.exportBase || '';
+    if (!base) return;
+    var desde = document.getElementById('exportDesde').value.trim();
+    var hasta = document.getElementById('exportHasta').value.trim();
+    var url = base;
+    if (desde || hasta) {
+        url += (base.indexOf('?') >= 0 ? '&' : '?');
+        if (desde) url += 'desde=' + encodeURIComponent(desde);
+        if (hasta) url += (desde ? '&' : '') + 'hasta=' + encodeURIComponent(hasta);
+    }
+    modal.classList.remove('active');
+    window.location.href = url;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    try {
     // Count-up animation
     document.querySelectorAll('.count-up').forEach(el => {
         const target = parseInt(el.dataset.target) || 0;
@@ -205,7 +321,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Pagination
     const table = document.getElementById('mainDataTable');
-    if (!table) return;
+    if (!table) { return; }
     const tbody = table.querySelector('tbody');
     const allRows = Array.from(tbody.querySelectorAll('tr'));
     const pageSizeSelect = document.getElementById('pageSizeSelect');
@@ -264,12 +380,67 @@ document.addEventListener('DOMContentLoaded', () => {
     // Filter integration with pagination
     const tableFilter = document.getElementById('tableFilter');
     const columnFilter = document.getElementById('columnFilter');
+    const columnValueFilter = document.getElementById('columnValueFilter');
     const tableInfo = document.getElementById('tableInfo');
+    const parentFilterSelect = document.getElementById('parentFilterSelect');
+
+    // Mapa colKey -> índice de celda (para filtro por categoría en Hijos Activos/Inactivos)
+    const colKeyToIndex = {};
+    table.querySelectorAll('thead th[data-col-key]').forEach((th, i) => {
+        colKeyToIndex[th.getAttribute('data-col-key')] = i;
+    });
+    function getCellText(row, colKey) {
+        const idx = colKeyToIndex[colKey];
+        if (idx == null || !row.cells[idx]) return '';
+        return row.cells[idx].textContent.trim();
+    }
+    function getCellTextByIndex(row, colIdx) {
+        if (colIdx < 0 || !row.cells[colIdx]) return '';
+        return (row.cells[colIdx].textContent || '').trim();
+    }
+
+    let categoryFilter = { col: null, value: null };
+    let parentFilterCedula = '';
+    let columnValueFilterValue = '';
+
+    function populateColumnValueFilter(colIdx) {
+        if (!columnValueFilter || colIdx < 0) return;
+        const values = new Set();
+        allRows.forEach(row => {
+            const v = getCellTextByIndex(row, colIdx);
+            if (v) values.add(v);
+        });
+        const sorted = Array.from(values).sort((a, b) => String(a).localeCompare(String(b)));
+        columnValueFilter.innerHTML = '<option value="">— Todos —</option>';
+        sorted.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v;
+            opt.textContent = v;
+            columnValueFilter.appendChild(opt);
+        });
+        columnValueFilter.style.display = '';
+        columnValueFilter.value = '';
+        columnValueFilterValue = '';
+    }
 
     function applyFilter() {
         const term = (tableFilter?.value || '').toLowerCase();
         const colIdx = columnFilter ? parseInt(columnFilter.value) : -1;
+        const valueFilter = (columnValueFilter?.value ?? '').trim();
+        columnValueFilterValue = valueFilter;
         visibleRows = allRows.filter(row => {
+            if (categoryFilter.col && categoryFilter.value !== null && categoryFilter.value !== '' && categoryFilter.value !== '__parent__') {
+                const cellText = getCellText(row, categoryFilter.col);
+                if (categoryFilter.col === 'sexo') {
+                    if (categoryFilter.value === 'M' && !cellText.includes('M')) return false;
+                    if (categoryFilter.value === 'F' && !cellText.includes('F')) return false;
+                } else if (cellText !== String(categoryFilter.value)) return false;
+            }
+            if (parentFilterCedula && getCellText(row, 'id_cedula') !== parentFilterCedula) return false;
+            if (colIdx >= 0 && valueFilter) {
+                const cellText = getCellTextByIndex(row, colIdx);
+                if (cellText !== valueFilter) return false;
+            }
             if (!term) return true;
             if (colIdx >= 0) {
                 const cell = row.children[colIdx];
@@ -286,7 +457,43 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     tableFilter?.addEventListener('input', applyFilter);
-    columnFilter?.addEventListener('change', applyFilter);
+    columnFilter?.addEventListener('change', () => {
+        const colIdx = columnFilter ? parseInt(columnFilter.value) : -1;
+        if (columnValueFilter) {
+            if (colIdx >= 0) {
+                populateColumnValueFilter(colIdx);
+            } else {
+                columnValueFilter.style.display = 'none';
+                columnValueFilter.innerHTML = '<option value="">— Todos —</option>';
+                columnValueFilterValue = '';
+            }
+        }
+        applyFilter();
+    });
+    columnValueFilter?.addEventListener('change', applyFilter);
+
+    // Filtro por categoría: clic en tarjetas (Hijos Activos, Niños, Niñas, Empleados Padres)
+    document.querySelectorAll('.stat-card-clickable').forEach(card => {
+        card.addEventListener('click', () => {
+            const col = card.getAttribute('data-filter-col');
+            const val = card.getAttribute('data-filter-value');
+            if (val === '__parent__') {
+                categoryFilter = { col: null, value: null };
+            } else {
+                categoryFilter = { col: col || null, value: val === '' ? null : val };
+            }
+            document.querySelectorAll('.stat-card-clickable').forEach(c => c.classList.remove('stat-card-active'));
+            card.classList.add('stat-card-active');
+            applyFilter();
+        });
+        card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); card.click(); } });
+    });
+    if (parentFilterSelect) {
+        parentFilterSelect.addEventListener('change', () => {
+            parentFilterCedula = parentFilterSelect.value || '';
+            applyFilter();
+        });
+    }
 
     // Global search integration
     const globalSearch = document.getElementById('globalSearch');
@@ -310,6 +517,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (e.key === 'Escape') exportModal.classList.remove('active');
         });
     }
+    } catch (err) { console.warn('data_table init:', err); }
 });
 </script>
 {% endblock %}

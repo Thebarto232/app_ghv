@@ -1,4 +1,14 @@
+// Tras recargar o volver (p. ej. después de inactivar, aprobar, etc.) las páginas pueden re-ejecutar su setup
+window.addEventListener('pageshow', function(ev) {
+    try {
+        window.dispatchEvent(new CustomEvent('app-pageshow', { detail: { persisted: !!ev.persisted } }));
+    } catch (e) {}
+});
+
 document.addEventListener('DOMContentLoaded', () => {
+    try {
+        window.dispatchEvent(new CustomEvent('app-pageshow', { detail: { persisted: false } }));
+    } catch (e) {}
 
     // ── Sidebar toggle ──────────────────────────────────────
     const toggle = document.getElementById('menuToggle');
@@ -29,26 +39,25 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // ── Table search / filter (only for NON-paginated tables) ──
-    const tableFilter = document.getElementById('tableFilter');
-    const hasPagination = document.querySelector('.paginated-table');
-    if (tableFilter && !hasPagination) {
-        tableFilter.addEventListener('input', () => {
-            const term = tableFilter.value.toLowerCase();
+    // ── Table search / filter (solo tablas NO paginadas); delegación para que siga funcionando tras recargar
+    document.addEventListener('input', function(e) {
+        if (e.target.id !== 'tableFilter') return;
+        if (document.querySelector('.paginated-table')) return;
+        try {
+            const term = (e.target.value || '').toLowerCase();
             const rows = document.querySelectorAll('.data-table tbody tr');
             let visible = 0;
             rows.forEach(row => {
-                const text = row.textContent.toLowerCase();
-                const show = text.includes(term);
+                const show = !term || (row.textContent || '').toLowerCase().includes(term);
                 row.style.display = show ? '' : 'none';
                 if (show) visible++;
             });
             const info = document.getElementById('tableInfo');
-            if (info) info.textContent = `${visible} registros`;
-        });
-    }
+            if (info) info.textContent = visible + ' registros';
+        } catch (err) {}
+    });
 
-    // ── Global search: tabla O tarjetas del Home ─────────────
+    // ── Global search: tabla O tarjetas del Home O lista de permisos ─────────────
     if (globalSearch) {
         globalSearch.addEventListener('input', () => {
             const term = (globalSearch.value || '').toLowerCase().trim();
@@ -64,10 +73,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
+            // Solicitudes de permiso: filtrar tarjetas por nombre, cédula, área, tipo, fechas, motivo, etc.
+            const permisosList = document.querySelector('.permisos-list');
+            if (permisosList) {
+                permisosList.querySelectorAll('.permiso-card').forEach(card => {
+                    const text = card.textContent.toLowerCase();
+                    card.style.display = term === '' || text.includes(term) ? '' : 'none';
+                });
+                return;
+            }
+
             // Páginas con tabla: sincronizar con tableFilter
-            if (tableFilter && !hasPagination) {
-                tableFilter.value = globalSearch.value;
-                tableFilter.dispatchEvent(new Event('input'));
+            const tf = document.getElementById('tableFilter');
+            if (tf && !document.querySelector('.paginated-table')) {
+                tf.value = globalSearch.value;
+                tf.dispatchEvent(new Event('input'));
             }
         });
     }
@@ -146,12 +166,12 @@ document.addEventListener('DOMContentLoaded', () => {
 /* ═══════════════════════════════════════════════════════════
    REAL-TIME ENGINE
    - Intercepts all modal forms → AJAX submit → no full reload
-   - Auto-refreshes page content every 50 s
+   - Auto-refreshes page content every 5 min
    - Toast notifications
    - Live indicator with timestamp
 ═══════════════════════════════════════════════════════════ */
 const RT = {
-    pollMs: 50000,          // auto-refresh interval
+    pollMs: 300000,         // auto-refresh interval (5 min)
     _timer: null,
     _refreshing: false,
 
@@ -294,16 +314,24 @@ const RT = {
             });
         });
 
-        // Re-aplicar filtro global en Home si hay texto en la búsqueda
+        // Re-aplicar filtro global si hay texto en la búsqueda
         const gs = document.getElementById('globalSearch');
-        const grid = container.querySelector('.home-grid');
-        if (gs && grid && gs.value.trim()) {
+        if (gs && gs.value.trim()) {
             const term = gs.value.toLowerCase().trim();
-            grid.querySelectorAll('.home-card').forEach(card => {
-                const label = card.querySelector('.home-card-label');
-                const text = (label ? label.textContent : card.textContent).toLowerCase();
-                card.style.display = text.includes(term) ? '' : 'none';
-            });
+            const grid = container.querySelector('.home-grid');
+            if (grid) {
+                grid.querySelectorAll('.home-card').forEach(card => {
+                    const label = card.querySelector('.home-card-label');
+                    const text = (label ? label.textContent : card.textContent).toLowerCase();
+                    card.style.display = text.includes(term) ? '' : 'none';
+                });
+            }
+            const permisosList = container.querySelector('.permisos-list');
+            if (permisosList) {
+                permisosList.querySelectorAll('.permiso-card').forEach(card => {
+                    card.style.display = card.textContent.toLowerCase().includes(term) ? '' : 'none';
+                });
+            }
         }
 
         // Table filter (non-paginated)

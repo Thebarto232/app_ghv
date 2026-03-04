@@ -26,3 +26,5 @@ class Config:
     MAIL_GESTOR_CONTRATACION = os.getenv("MAIL_GESTOR_CONTRATACION", "gestor.contratacion@colbeef.com")
     # Pruebas: dejar vacío o poner un correo extra que reciba copia en cada envío.
     MAIL_PRUEBAS_CC = os.getenv("MAIL_PRUEBAS_CC", "")
+    # Único correo que puede tener el rol ADMIN (seguridad).
+    ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "tecnologia@colbeef.com").strip().lower()

@@ -22,49 +22,89 @@
             <p class="permisos-intro">Revise cada solicitud y elija <strong>Aprobar</strong> o <strong>Rechazar</strong>. No se enviará nada al empleado hasta que usted confirme.</p>
             {% endif %}
         </div>
-        <a href="{{ url_for('permiso_solicitar') }}" class="btn btn-outline btn-sm permisos-btn-nueva">
-            <span class="material-symbols-outlined" style="font-size:18px">add</span>
-            Nueva solicitud
-        </a>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            {% if puede_aprobar and permisos_export_url_full is defined %}
+            <a href="{{ permisos_export_url_full }}" class="btn btn-outline btn-sm" title="Exportar con los filtros actuales">
+                <span class="material-symbols-outlined" style="font-size:18px">download</span>
+                Exportar Excel
+            </a>
+            {% endif %}
+            <a href="{{ url_for('permiso_solicitar') }}" class="btn btn-outline btn-sm permisos-btn-nueva">
+                <span class="material-symbols-outlined" style="font-size:18px">add</span>
+                Nueva solicitud
+            </a>
+        </div>
     </div>
 
     {% if puede_aprobar and pendientes|length > 0 %}
-    <div class="permisos-alert-pendientes">
+    <div class="permisos-alert-pendientes" id="permisosAlertPendientes">
         <span class="material-symbols-outlined">info</span>
-        Tiene <strong>{{ pendientes|length }}</strong> solicitud{{ 'es' if pendientes|length != 1 else '' }} pendiente{{ 's' if pendientes|length != 1 else '' }} por revisar.
+        <span id="permisosAlertText">Tiene <strong id="permisosPendientesNum">{{ pendientes|length }}</strong> solicitud{{ 'es' if pendientes|length != 1 else '' }} pendiente{{ 's' if pendientes|length != 1 else '' }} por revisar.</span>
     </div>
     {% endif %}
 
     {% if puede_aprobar and solicitudes %}
-    <div class="permisos-stats">
-        <div class="permisos-stat permisos-stat-pendiente">
+    <div class="permisos-stats" id="permisosStats">
+        <a href="{{ url_for('permisos_index', estado='' if filtro_estado == 'PENDIENTE' else 'PENDIENTE', buscar=filtro_buscar or none, area=filtro_area or none, tipo=filtro_tipo or none, orden=filtro_orden or none) }}" class="permisos-stat permisos-stat-pendiente {{ 'permisos-stat-active' if filtro_estado == 'PENDIENTE' else '' }}">
             <span class="material-symbols-outlined">schedule</span>
-            <span class="permisos-stat-num">{{ pendientes|length }}</span>
+            <span class="permisos-stat-num" id="statPendientesNum">{{ pendientes|length }}</span>
             <span class="permisos-stat-label">Pendientes</span>
-        </div>
-        <div class="permisos-stat permisos-stat-aprobado">
+        </a>
+        <a href="{{ url_for('permisos_index', estado='' if filtro_estado == 'APROBADO' else 'APROBADO', buscar=filtro_buscar or none, area=filtro_area or none, tipo=filtro_tipo or none, orden=filtro_orden or none) }}" class="permisos-stat permisos-stat-aprobado {{ 'permisos-stat-active' if filtro_estado == 'APROBADO' else '' }}">
             <span class="material-symbols-outlined">check_circle</span>
-            <span class="permisos-stat-num">{{ aprobadas|length }}</span>
+            <span class="permisos-stat-num" id="statAprobadasNum">{{ aprobadas|length }}</span>
             <span class="permisos-stat-label">Aprobadas</span>
-        </div>
-        <div class="permisos-stat permisos-stat-rechazado">
+        </a>
+        <a href="{{ url_for('permisos_index', estado='' if filtro_estado == 'RECHAZADO' else 'RECHAZADO', buscar=filtro_buscar or none, area=filtro_area or none, tipo=filtro_tipo or none, orden=filtro_orden or none) }}" class="permisos-stat permisos-stat-rechazado {{ 'permisos-stat-active' if filtro_estado == 'RECHAZADO' else '' }}">
             <span class="material-symbols-outlined">cancel</span>
-            <span class="permisos-stat-num">{{ rechazadas|length }}</span>
+            <span class="permisos-stat-num" id="statRechazadasNum">{{ rechazadas|length }}</span>
             <span class="permisos-stat-label">Rechazadas</span>
-        </div>
+        </a>
     </div>
+    {% if puede_aprobar %}
+    <form method="get" action="{{ url_for('permisos_index') }}" class="permisos-filters">
+        <input type="hidden" name="estado" value="{{ filtro_estado or '' }}">
+        <div class="permisos-filters-row">
+            <input type="text" name="buscar" value="{{ filtro_buscar or '' }}" class="form-input permisos-filter-input" placeholder="Buscar por nombre o cédula...">
+            <select name="area" class="form-input permisos-filter-select">
+                <option value="">Todas las áreas</option>
+                {% for a in areas_list|default([]) %}
+                <option value="{{ a }}" {{ 'selected' if filtro_area == a else '' }}>{{ a }}</option>
+                {% endfor %}
+            </select>
+            <select name="tipo" class="form-input permisos-filter-select">
+                <option value="">Todos los tipos</option>
+                {% for t in tipos_list|default([]) %}
+                <option value="{{ t }}" {{ 'selected' if filtro_tipo == t else '' }}>{{ t }}</option>
+                {% endfor %}
+            </select>
+            <select name="orden" class="form-input permisos-filter-select">
+                <option value="">Orden: pendientes primero, luego por fecha</option>
+                <option value="fecha_desde" {{ 'selected' if filtro_orden == 'fecha_desde' else '' }}>Orden: fecha de permiso (próximos primero)</option>
+                <option value="nombre" {{ 'selected' if filtro_orden == 'nombre' else '' }}>Orden: por nombre</option>
+            </select>
+            <button type="submit" class="btn btn-outline btn-sm">Filtrar</button>
+        </div>
+    </form>
+    {% endif %}
     {% endif %}
 
     {% if solicitudes %}
-    <div class="permisos-list">
+    <div class="permisos-slider-wrap">
+        <div class="permisos-list permisos-list-horizontal" id="permisosList">
         {% for s in solicitudes %}
-        <div class="permiso-card permiso-card-{{ s.estado|lower }}" data-estado="{{ s.estado }}">
+        <div class="permiso-card permiso-card-{{ s.estado|lower }} permiso-slide" data-estado="{{ s.estado }}" data-id="{{ s.id }}">
             <div class="permiso-card-main">
                 <div class="permiso-card-header">
                     <div class="permiso-card-persona">
+                        {% if puede_aprobar %}
+                        <a href="{{ url_for('detalle_empleado', id=s.id_cedula) }}" class="permiso-card-nombre permiso-card-nombre-link">{{ s.apellidos_nombre }}</a>
+                        {% else %}
                         <span class="permiso-card-nombre">{{ s.apellidos_nombre }}</span>
+                        {% endif %}
                         <span class="permiso-card-cedula">{{ s.id_cedula }}</span>
                         {% if s.area %}<span class="permiso-card-area">{{ s.area }}</span>{% endif %}
+                        {% if s.get('_es_proximo') %}<span class="badge badge-info badge-sm permiso-badge-proximo">Próximo</span>{% endif %}
                     </div>
                     <div class="permiso-card-estado">
                         {% if s.estado == 'PENDIENTE' %}
@@ -132,6 +172,16 @@
             {% endif %}
         </div>
         {% endfor %}
+        </div>
+        <div class="permisos-slider-controls" id="permisosSliderControls">
+            <button type="button" class="btn btn-outline btn-sm permiso-slider-prev" id="permisoSliderPrev" aria-label="Anterior">
+                <span class="material-symbols-outlined">chevron_left</span> Anterior
+            </button>
+            <span class="permisos-slider-indicator" id="permisoSliderIndicator">1 / {{ solicitudes|length }}</span>
+            <button type="button" class="btn btn-outline btn-sm permiso-slider-next" id="permisoSliderNext" aria-label="Siguiente">
+                Siguiente <span class="material-symbols-outlined">chevron_right</span>
+            </button>
+        </div>
     </div>
     {% else %}
     <div class="permisos-empty">
@@ -216,7 +266,23 @@
 .permisos-stat-pendiente .material-symbols-outlined, .permisos-stat-pendiente .permisos-stat-num { color: #b45309; }
 .permisos-stat-aprobado .material-symbols-outlined, .permisos-stat-aprobado .permisos-stat-num { color: var(--colbeef-green); }
 .permisos-stat-rechazado .material-symbols-outlined, .permisos-stat-rechazado .permisos-stat-num { color: var(--colbeef-red); }
+.permisos-stats a.permisos-stat { text-decoration: none; color: inherit; display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-radius: 12px; background: var(--surface); box-shadow: var(--shadow-sm); border: 1px solid var(--border); transition: transform 0.15s ease, box-shadow 0.15s ease; }
+.permisos-stats a.permisos-stat:hover { transform: translateY(-1px); box-shadow: var(--shadow-md); }
+.permisos-stats a.permisos-stat.permisos-stat-active { box-shadow: 0 0 0 2px var(--colbeef-green); border-color: var(--colbeef-green); }
+.permisos-filters { margin-bottom: 20px; }
+.permisos-filters-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.permisos-filter-input { min-width: 200px; max-width: 260px; }
+.permisos-filter-select { min-width: 160px; max-width: 200px; }
+.permiso-card-nombre-link { color: var(--colbeef-green); font-weight: 600; }
+.permiso-card-nombre-link:hover { text-decoration: underline; }
+.permiso-badge-proximo { margin-left: 6px; font-size: 0.7rem; }
 .permisos-list { display: flex; flex-direction: column; gap: 18px; }
+/* Slider horizontal: una tarjeta a la vez */
+.permisos-slider-wrap { margin-bottom: 24px; }
+.permisos-list-horizontal { display: flex; flex-direction: row; gap: 0; overflow: hidden; scroll-behavior: smooth; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; }
+.permisos-list-horizontal .permiso-slide { flex: 0 0 100%; min-width: 0; scroll-snap-align: start; scroll-snap-stop: always; }
+.permisos-slider-controls { display: flex; align-items: center; justify-content: center; gap: 20px; margin-top: 16px; padding: 12px 0; }
+.permisos-slider-indicator { font-size: 0.9rem; color: var(--text-secondary); font-weight: 500; min-width: 80px; text-align: center; }
 .permiso-card { display: flex; flex-wrap: wrap; align-items: stretch; gap: 20px; padding: 22px; background: var(--surface); border-radius: 14px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); border-left: 5px solid var(--border); transition: box-shadow var(--transition), border-color var(--transition); }
 .permiso-card:hover { box-shadow: var(--shadow-md); }
 .permiso-card-pendiente { border-left-color: #f59e0b; background: linear-gradient(to right, #fffbeb 0%, var(--surface) 8%); }
@@ -260,7 +326,8 @@
 
 {% block scripts %}
 <script>
-(function() {
+document.addEventListener('DOMContentLoaded', function() {
+    try {
     const actionBaseAprobar = "{{ url_for('permiso_aprobar', id=0) }}";
     const actionBaseRechazar = "{{ url_for('permiso_rechazar', id=0) }}";
 
@@ -269,34 +336,156 @@
     const formAprobar = document.getElementById('formAprobar');
     const formRechazar = document.getElementById('formRechazar');
     const rechazarIdInput = document.getElementById('rechazarId');
+    const listEl = document.getElementById('permisosList');
+    const indicatorEl = document.getElementById('permisoSliderIndicator');
+    const alertTextEl = document.getElementById('permisosAlertText');
+    const alertWrap = document.getElementById('permisosAlertPendientes');
 
-    document.querySelectorAll('.btn-aprobar').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const id = btn.dataset.id;
-            formAprobar.action = actionBaseAprobar.replace('/0/', '/' + id + '/');
-            formAprobar.querySelector('textarea[name="observaciones"]').value = '';
-            modalAprobar.classList.add('active');
+    let currentSlideIndex = 0;
+    let currentSolicitudId = null;
+
+    function getSlides() { return listEl ? Array.from(listEl.querySelectorAll('.permiso-slide')) : []; }
+    function updateSliderUI() {
+        const slides = getSlides();
+        const total = slides.length;
+        currentSlideIndex = total ? Math.min(currentSlideIndex, total - 1) : 0;
+        if (listEl && total) listEl.scrollLeft = currentSlideIndex * listEl.clientWidth;
+        if (indicatorEl) indicatorEl.textContent = total ? (currentSlideIndex + 1) + ' / ' + total : '0 / 0';
+        var prevBtn = document.getElementById('permisoSliderPrev');
+        var nextBtn = document.getElementById('permisoSliderNext');
+        if (prevBtn) prevBtn.disabled = currentSlideIndex <= 0;
+        if (nextBtn) nextBtn.disabled = currentSlideIndex >= total - 1;
+    }
+
+    if (listEl) {
+        listEl.addEventListener('scroll', function() {
+            const slides = getSlides();
+            if (slides.length === 0) return;
+            const w = listEl.clientWidth;
+            currentSlideIndex = Math.round(listEl.scrollLeft / w);
+            currentSlideIndex = Math.max(0, Math.min(currentSlideIndex, slides.length - 1));
+            if (indicatorEl) indicatorEl.textContent = (currentSlideIndex + 1) + ' / ' + slides.length;
         });
+        document.getElementById('permisoSliderPrev')?.addEventListener('click', function() {
+            const slides = getSlides();
+            if (currentSlideIndex > 0) {
+                currentSlideIndex--;
+                listEl.scrollLeft = currentSlideIndex * listEl.clientWidth;
+                updateSliderUI();
+            }
+        });
+        document.getElementById('permisoSliderNext')?.addEventListener('click', function() {
+            const slides = getSlides();
+            if (currentSlideIndex < slides.length - 1) {
+                currentSlideIndex++;
+                listEl.scrollLeft = currentSlideIndex * listEl.clientWidth;
+                updateSliderUI();
+            }
+        });
+    }
+
+    function updateStatsFromServer(data) {
+        const p = document.getElementById('statPendientesNum');
+        const a = document.getElementById('statAprobadasNum');
+        const r = document.getElementById('statRechazadasNum');
+        if (p) p.textContent = data.pendientes;
+        if (a) a.textContent = data.aprobadas;
+        if (r) r.textContent = data.rechazadas;
+        if (alertTextEl) {
+            const n = data.pendientes;
+            alertTextEl.innerHTML = 'Tiene <strong id="permisosPendientesNum">' + n + '</strong> solicitud' + (n !== 1 ? 'es' : '') + ' pendiente' + (n !== 1 ? 's' : '') + ' por revisar.';
+        }
+        if (alertWrap && data.pendientes === 0) alertWrap.style.display = 'none';
+    }
+
+    function removeCardById(id) {
+        const card = listEl && listEl.querySelector('.permiso-slide[data-id="' + id + '"]');
+        if (card) {
+            card.remove();
+            const slides = getSlides();
+            const ctrl = document.getElementById('permisosSliderControls');
+            if (ctrl) ctrl.style.display = slides.length ? 'flex' : 'none';
+            updateSliderUI();
+        }
+    }
+
+    function submitAprobarRechazar(url, formData, solicitudId) {
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+            body: formData
+        }).then(function(r) { return r.json().then(function(data) { return { status: r.status, data: data }; }); });
+    }
+
+    // Un solo listener en document para que Aprobar/Rechazar sigan funcionando tras recargar
+    document.addEventListener('click', function(e) {
+        var btn = e.target.closest('.btn-aprobar');
+        if (btn && formAprobar && modalAprobar) {
+            currentSolicitudId = btn.dataset.id;
+            formAprobar.action = actionBaseAprobar.replace('/0/', '/' + currentSolicitudId + '/');
+            var ta = formAprobar.querySelector('textarea[name="observaciones"]');
+            if (ta) ta.value = '';
+            modalAprobar.classList.add('active');
+            return;
+        }
+        btn = e.target.closest('.btn-rechazar');
+        if (btn && formRechazar && modalRechazar && rechazarIdInput) {
+            currentSolicitudId = btn.dataset.id;
+            rechazarIdInput.value = currentSolicitudId;
+            formRechazar.action = actionBaseRechazar.replace('/0/', '/' + currentSolicitudId + '/');
+            var ta = formRechazar.querySelector('textarea[name="observaciones"]');
+            if (ta) ta.value = '';
+            modalRechazar.classList.add('active');
+        }
     });
 
-    document.querySelectorAll('.btn-rechazar').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const id = btn.dataset.id;
-            rechazarIdInput.value = id;
-            formRechazar.action = actionBaseRechazar.replace('/0/', '/' + id + '/');
-            formRechazar.querySelector('textarea[name="observaciones"]').value = '';
-            modalRechazar.classList.add('active');
-        });
+    formAprobar.addEventListener('submit', function(ev) {
+        ev.preventDefault();
+        var url = formAprobar.action;
+        var formData = new FormData(formAprobar);
+        var id = currentSolicitudId;
+        submitAprobarRechazar(url, formData, id).then(function(res) {
+            if (res.status === 200 && res.data && res.data.ok) {
+                closeModal('modalAprobar');
+                updateStatsFromServer(res.data);
+                removeCardById(id);
+            } else {
+                alert(res.data && res.data.error ? res.data.error : 'Error al aprobar.');
+            }
+        }).catch(function() { alert('Error de conexión.'); });
+        return false;
+    });
+
+    formRechazar.addEventListener('submit', function(ev) {
+        ev.preventDefault();
+        var url = formRechazar.action;
+        var formData = new FormData(formRechazar);
+        var id = currentSolicitudId;
+        submitAprobarRechazar(url, formData, id).then(function(res) {
+            if (res.status === 200 && res.data && res.data.ok) {
+                closeModal('modalRechazar');
+                updateStatsFromServer(res.data);
+                removeCardById(id);
+            } else {
+                alert(res.data && res.data.error ? res.data.error : 'Error al rechazar.');
+            }
+        }).catch(function() { alert('Error de conexión.'); });
+        return false;
     });
 
     function closeModal(modalId) {
-        document.getElementById(modalId).classList.remove('active');
+        var m = document.getElementById(modalId);
+        if (m) m.classList.remove('active');
     }
     document.querySelectorAll('[data-close-modal]').forEach(el => {
-        el.addEventListener('click', () => closeModal(el.dataset.modal || 'modalRechazar'));
+        el.addEventListener('click', function() { closeModal(el.dataset.modal || 'modalRechazar'); });
     });
-    modalAprobar.addEventListener('click', e => { if (e.target === modalAprobar) closeModal('modalAprobar'); });
-    modalRechazar.addEventListener('click', e => { if (e.target === modalRechazar) closeModal('modalRechazar'); });
-})();
+    if (modalAprobar) modalAprobar.addEventListener('click', function(e) { if (e.target === modalAprobar) closeModal('modalAprobar'); });
+    if (modalRechazar) modalRechazar.addEventListener('click', function(e) { if (e.target === modalRechazar) closeModal('modalRechazar'); });
+
+    if (listEl) updateSliderUI();
+    window.addEventListener('app-pageshow', function() { try { if (listEl) updateSliderUI(); } catch(err) {} });
+    } catch (err) { console.warn('permisos_list init:', err); }
+});
 </script>
 {% endblock %}

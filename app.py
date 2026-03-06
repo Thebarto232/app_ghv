@@ -3,8 +3,10 @@ from flask import (
     flash, jsonify, session, g, make_response, current_app,
 )
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 from functools import wraps
 import re
+import os
 import mysql.connector
 import io
 from datetime import datetime, date
@@ -56,7 +58,7 @@ def execute(sql, params=None):
 # Fallback si no existen tablas o están vacías
 _ROLE_PERMISSIONS_FALLBACK = {
     "ADMIN": "ALL", "COORD. GH": "ALL", "GESTOR DE CONTRATACION": "WRITE",
-    "BIENESTAR SOCIAL": "WRITE", "GESTOR DE NOMINA": "WRITE", "GESTOR SST": "READ",
+    "BIENESTAR SOCIAL": "READ", "GESTOR DE NOMINA": "WRITE", "GESTOR SST": "READ",
 }
 
 
@@ -425,6 +427,56 @@ def logout():
     return redirect(url_for("login"))
 
 
+# ── FOTO DE PERFIL ───────────────────────────────────────────
+
+AVATAR_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+AVATAR_MAX_SIZE = 2 * 1024 * 1024  # 2 MB
+
+
+@app.route("/perfil/foto", methods=["POST"])
+@login_required
+def perfil_subir_foto():
+    """Sube la foto de perfil del usuario. Guarda en static/avatars/id_user.ext y actualiza usuario.foto_perfil."""
+    user = get_current_user()
+    if not user:
+        flash("Debe iniciar sesión.", "error")
+        return redirect(url_for("login"))
+    id_user = user["id_user"]
+    file = request.files.get("foto")
+    if not file or not file.filename:
+        flash("Seleccione una imagen.", "error")
+        return redirect(request.referrer or url_for("home"))
+    ext = os.path.splitext(secure_filename(file.filename))[1].lower()
+    if ext not in AVATAR_EXTENSIONS:
+        ext = ".jpg"
+    file.seek(0, 2)
+    size = file.tell()
+    file.seek(0)
+    if size > AVATAR_MAX_SIZE:
+        flash("La imagen no debe superar 2 MB.", "error")
+        return redirect(request.referrer or url_for("home"))
+    static_folder = current_app.static_folder
+    avatars_dir = os.path.join(static_folder, "avatars")
+    os.makedirs(avatars_dir, exist_ok=True)
+    filename = id_user + ext
+    filepath = os.path.join(avatars_dir, filename)
+    try:
+        file.save(filepath)
+    except Exception as e:
+        flash("No se pudo guardar la imagen.", "error")
+        return redirect(request.referrer or url_for("home"))
+    ruta_db = "avatars/" + filename
+    try:
+        execute("UPDATE usuario SET foto_perfil = %s WHERE id_user = %s", (ruta_db, id_user))
+    except Exception:
+        flash("Guardado en servidor; falta ejecutar migración: database/migration_foto_perfil.sql", "warning")
+        return redirect(request.referrer or url_for("home"))
+    if hasattr(g, "_user"):
+        g._user["foto_perfil"] = ruta_db
+    flash("Foto de perfil actualizada.", "success")
+    return redirect(request.referrer or url_for("home"))
+
+
 # ── PORTAL EMPLEADO (registro, panel, mis solicitudes) ─────────
 
 @app.route("/empleado/registro", methods=["GET", "POST"])
@@ -559,13 +611,16 @@ def home():
 # ── CUMPLEAÑOS ────────────────────────────────────────────────
 
 def parse_fecha(fecha_str):
+    """Parsea fecha desde string. Prioriza DD/MM/YYYY (Colombia) para que cumpleaños coincidan con la fecha real."""
     if not fecha_str:
         return None
     if isinstance(fecha_str, date):
         return fecha_str
-    for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
+    s = str(fecha_str).strip()
+    # Orden: DD/MM primero (estándar Colombia/Latam), luego ISO, luego MM/DD (US)
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
         try:
-            return datetime.strptime(str(fecha_str).strip(), fmt).date()
+            return datetime.strptime(s, fmt).date()
         except (ValueError, AttributeError):
             continue
     return None
@@ -1059,58 +1114,118 @@ def permisos_index():
     )
 
 
+# Roles que pueden solicitar permiso "para sí mismos" (si tienen id_cedula en usuario)
+# Cualquier rol con id_cedula vinculada puede solicitar permiso/vacaciones "para sí" (mismos campos bloqueados + validación en servidor)
+_ROLES_SOLICITAR_PARA_SI = (
+    "EMPLEADO", "BIENESTAR SOCIAL", "ADMIN", "COORD. GH",
+    "GESTOR DE CONTRATACION", "GESTOR DE NOMINA", "GESTOR SST",
+)
+
+
 @app.route("/permisos/solicitar", methods=["GET", "POST"])
 @login_required
 @module_required("permisos")
 def permiso_solicitar():
     """Formulario GH-FR-007: permiso o licencia (área, remunerado/no, hora inicio/fin)."""
     user = get_current_user()
-    is_empleado = (user.get("rol") or "").strip().upper() == "EMPLEADO"
-    id_cedula_empleado = (user.get("id_cedula") or "").strip() if is_empleado else None
+    rol = (user.get("rol") or "").strip().upper()
+    is_empleado = rol == "EMPLEADO"
+    # Cualquier usuario con id_cedula (todos los roles) usa flujo "para sí" con campos bloqueados y validación en servidor
+    id_cedula_empleado = (user.get("id_cedula") or "").strip() or None
 
     if request.method == "POST":
         id_cedula = (request.form.get("id_cedula") or "").strip()
-        if is_empleado:
-            id_cedula = id_cedula_empleado or id_cedula
-            if id_cedula != id_cedula_empleado:
+        if id_cedula_empleado:
+            id_cedula = id_cedula_empleado
+            if request.form.get("id_cedula", "").strip() != id_cedula_empleado:
                 flash("No puede enviar solicitudes a nombre de otro empleado.", "error")
                 return redirect(url_for("permiso_solicitar"))
         tipo = (request.form.get("tipo") or "Permiso").strip()
+        _tipos_permitidos = ("Permiso", "Licencia", "Médico", "Personal", "Capacitación", "Calamidad doméstica", "Otro")
+        if tipo not in _tipos_permitidos:
+            tipo = "Permiso"
         fecha_desde = request.form.get("fecha_desde")
         fecha_hasta = request.form.get("fecha_hasta")
         motivo = (request.form.get("motivo") or "").strip()
         area = (request.form.get("area") or "").strip() or None
         pr = request.form.get("permiso_remunerado")
-        pnr = request.form.get("permiso_no_remunerado")
         permiso_remunerado = int(pr) if pr in ("0", "1") else None
-        permiso_no_remunerado = int(pnr) if pnr in ("0", "1") else None
+        permiso_no_remunerado = 0 if permiso_remunerado == 1 else (1 if permiso_remunerado == 0 else None)
         hora_inicio = (request.form.get("hora_inicio") or "").strip() or None
         hora_fin = (request.form.get("hora_fin") or "").strip() or None
         if not id_cedula or not fecha_desde or not fecha_hasta:
             flash("Complete empleado, fecha desde y fecha hasta.", "error")
             return redirect(url_for("permiso_solicitar"))
+        if permiso_remunerado is None:
+            flash("Indique si el permiso es remunerado o no.", "error")
+            return redirect(url_for("permiso_solicitar"))
+        try:
+            d_desde = datetime.strptime(fecha_desde, "%Y-%m-%d").date()
+            d_hasta = datetime.strptime(fecha_hasta, "%Y-%m-%d").date()
+            if d_desde > d_hasta:
+                flash("La fecha desde no puede ser mayor que la fecha hasta.", "error")
+                return redirect(url_for("permiso_solicitar"))
+        except ValueError:
+            flash("Fechas inválidas.", "error")
+            return redirect(url_for("permiso_solicitar"))
+        if permiso_remunerado == 0:
+            evidencia_file = request.files.get("evidencia")
+            if not evidencia_file or not evidencia_file.filename:
+                flash("Para permiso no remunerado debe adjuntar evidencia (PDF o imagen).", "error")
+                return redirect(url_for("permiso_solicitar"))
         emp = query("SELECT id_cedula, apellidos_nombre, direccion_email, area FROM empleado WHERE id_cedula = %s AND estado = 'ACTIVO'", (id_cedula,), one=True)
         if not emp:
             flash("No se encontró un empleado activo con esa cédula.", "error")
             return redirect(url_for("permiso_solicitar"))
-        if not area and emp.get("area"):
+        # Solicitud "para sí": no confiar en el formulario para cédula ni área (vienen de la ficha)
+        if id_cedula_empleado:
+            area = emp.get("area")
+        elif not area and emp.get("area"):
             area = emp["area"]
+
+        evidencia_ruta = None
+        if permiso_remunerado == 0:
+            evidencia_file = request.files.get("evidencia")
+            if evidencia_file and evidencia_file.filename:
+                ext = os.path.splitext(secure_filename(evidencia_file.filename))[1].lower()
+                if ext not in (".pdf", ".jpg", ".jpeg", ".png"):
+                    flash("La evidencia debe ser PDF o imagen (JPG, PNG).", "error")
+                    return redirect(url_for("permiso_solicitar"))
+                evidencia_file.seek(0, 2)
+                size = evidencia_file.tell()
+                evidencia_file.seek(0)
+                if size > 5 * 1024 * 1024:
+                    flash("La evidencia no debe superar 5 MB.", "error")
+                    return redirect(url_for("permiso_solicitar"))
+                upload_dir = os.path.join(current_app.instance_path, "uploads", "permisos")
+                os.makedirs(upload_dir, exist_ok=True)
+                nombre_safe = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{id_cedula}{ext}"
+                evidencia_ruta = os.path.join("permisos", nombre_safe)
+                evidencia_full_path = os.path.join(upload_dir, nombre_safe)
+                evidencia_file.save(evidencia_full_path)
+
         try:
             execute(
-                "INSERT INTO solicitud_permiso (id_cedula, tipo, fecha_desde, fecha_hasta, motivo, solicitante_email, area, permiso_remunerado, permiso_no_remunerado, hora_inicio, hora_fin) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (id_cedula, tipo, fecha_desde, fecha_hasta, motivo, get_current_user() and get_current_user().get("email"), area, permiso_remunerado, permiso_no_remunerado, hora_inicio, hora_fin),
+                "INSERT INTO solicitud_permiso (id_cedula, tipo, fecha_desde, fecha_hasta, motivo, solicitante_email, area, permiso_remunerado, permiso_no_remunerado, hora_inicio, hora_fin, evidencia) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (id_cedula, tipo, fecha_desde, fecha_hasta, motivo, get_current_user() and get_current_user().get("email"), area, permiso_remunerado, permiso_no_remunerado, hora_inicio, hora_fin, evidencia_ruta),
             )
         except Exception as e:
             if "Unknown column" in str(e):
                 execute(
-                    "INSERT INTO solicitud_permiso (id_cedula, tipo, fecha_desde, fecha_hasta, motivo, solicitante_email) VALUES (%s,%s,%s,%s,%s,%s)",
-                    (id_cedula, tipo, fecha_desde, fecha_hasta, motivo, get_current_user() and get_current_user().get("email")),
+                    "INSERT INTO solicitud_permiso (id_cedula, tipo, fecha_desde, fecha_hasta, motivo, solicitante_email, area, permiso_remunerado, permiso_no_remunerado, hora_inicio, hora_fin) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (id_cedula, tipo, fecha_desde, fecha_hasta, motivo, get_current_user() and get_current_user().get("email"), area, permiso_remunerado, permiso_no_remunerado, hora_inicio, hora_fin),
                 )
             else:
                 raise
         row = query("SELECT * FROM solicitud_permiso WHERE id_cedula = %s ORDER BY id DESC LIMIT 1", (id_cedula,), one=True)
-        correos_ok = notificar_nueva_solicitud_permiso(app, row, emp["apellidos_nombre"], emp.get("direccion_email"))
+        if not evidencia_ruta:
+            evidencia_full_path = None
+        else:
+            fp = os.path.join(current_app.instance_path, "uploads", evidencia_ruta)
+            evidencia_full_path = fp if os.path.isfile(fp) else None
+        correos_ok = notificar_nueva_solicitud_permiso(app, row, emp["apellidos_nombre"], emp.get("direccion_email"), evidencia_path=evidencia_full_path)
         if correos_ok:
             flash("Solicitud registrada. Se envió correo a Coordinación GH y a Gestor de Contratación.", "success")
         else:
@@ -1118,18 +1233,20 @@ def permiso_solicitar():
         if is_empleado:
             return redirect(url_for("empleado_mis_solicitudes"))
         return redirect(url_for("permisos_index"))
-    if is_empleado and id_cedula_empleado:
+    # Solicitud para sí mismo: usuario con id_cedula (EMPLEADO o BIENESTAR SOCIAL u otro rol en la lista)
+    if id_cedula_empleado:
         emp_actual = query(
             "SELECT id_cedula, apellidos_nombre, area FROM empleado WHERE id_cedula = %s AND estado = 'ACTIVO'",
             (id_cedula_empleado,), one=True,
         )
-        return render_template(
-            "permiso_form.html",
-            active_page="Solicitud de permiso",
-            empleados=None,
-            is_empleado=True,
-            empleado_actual=emp_actual,
-        )
+        if emp_actual:
+            return render_template(
+                "permiso_form.html",
+                active_page="Solicitud de permiso",
+                empleados=None,
+                is_empleado=is_empleado,
+                empleado_actual=emp_actual,
+            )
     empleados = query("SELECT id_cedula, apellidos_nombre, area FROM empleado WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre")
     return render_template(
         "permiso_form.html",
@@ -1138,6 +1255,128 @@ def permiso_solicitar():
         is_empleado=False,
         empleado_actual=None,
     )
+
+
+# ── SOLICITUD DE VACACIONES ───────────────────────────────────
+
+@app.route("/vacaciones/solicitar", methods=["GET", "POST"])
+@login_required
+@module_required("permisos")
+def vacaciones_solicitar():
+    """Formulario Solicitud de vacaciones (Gestión Humana - Colbeef)."""
+    user = get_current_user()
+    rol = (user.get("rol") or "").strip().upper()
+    is_empleado = rol == "EMPLEADO"
+    # Cualquier usuario con id_cedula (todos los roles) usa flujo "para sí" con validación en servidor
+    id_cedula_empleado = (user.get("id_cedula") or "").strip() or None
+
+    if request.method == "POST":
+        id_cedula = (request.form.get("id_cedula") or "").strip()
+        if id_cedula_empleado:
+            id_cedula = id_cedula_empleado
+            if request.form.get("id_cedula", "").strip() != id_cedula_empleado:
+                flash("No puede enviar solicitudes a nombre de otro empleado.", "error")
+                return redirect(url_for("vacaciones_solicitar"))
+        fecha_solicitud = request.form.get("fecha_solicitud")
+        periodo_causado = (request.form.get("periodo_causado") or "").strip() or None
+        dias_tiempo = request.form.get("dias_en_tiempo")
+        dias_comp = request.form.get("dias_compensados_dinero")
+        dias_en_tiempo = int(dias_tiempo) if dias_tiempo not in (None, "") else None
+        dias_compensados_dinero = int(dias_comp) if dias_comp not in (None, "") else None
+        fecha_inicio = request.form.get("fecha_inicio")
+        fecha_fin = request.form.get("fecha_fin")
+        fecha_regreso = request.form.get("fecha_regreso")
+        pago_anticipado = request.form.get("pago_anticipado")
+        pago_anticipado = 1 if pago_anticipado == "1" else (0 if pago_anticipado == "0" else None)
+        if not id_cedula or not fecha_solicitud or not fecha_inicio or not fecha_fin or not fecha_regreso:
+            flash("Complete cédula, fecha de solicitud y fechas de inicio, fin y regreso.", "error")
+            return redirect(url_for("vacaciones_solicitar"))
+        emp = query("SELECT id_cedula, apellidos_nombre, direccion_email FROM empleado WHERE id_cedula = %s AND estado = 'ACTIVO'", (id_cedula,), one=True)
+        if not emp:
+            flash("No se encontró un empleado activo con esa cédula.", "error")
+            return redirect(url_for("vacaciones_solicitar"))
+        try:
+            execute(
+                "INSERT INTO solicitud_vacaciones (id_cedula, fecha_solicitud, periodo_causado, dias_en_tiempo, dias_compensados_dinero, fecha_inicio, fecha_fin, fecha_regreso, pago_anticipado, solicitante_email) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (id_cedula, fecha_solicitud, periodo_causado, dias_en_tiempo, dias_compensados_dinero, fecha_inicio, fecha_fin, fecha_regreso, pago_anticipado, get_current_user() and get_current_user().get("email")),
+            )
+        except Exception as e:
+            if "doesn't exist" in str(e).lower():
+                flash("Ejecute la migración: database/migration_solicitud_vacaciones.sql", "error")
+                return redirect(url_for("vacaciones_solicitar"))
+            raise
+        flash("Solicitud de vacaciones registrada correctamente.", "success")
+        if is_empleado:
+            return redirect(url_for("vacaciones_mis_solicitudes"))
+        return redirect(url_for("vacaciones_index"))
+
+    if id_cedula_empleado:
+        emp_actual = query(
+            "SELECT id_cedula, apellidos_nombre FROM empleado WHERE id_cedula = %s AND estado = 'ACTIVO'",
+            (id_cedula_empleado,), one=True,
+        )
+        if emp_actual:
+            return render_template(
+                "vacaciones_form.html",
+                active_page="Solicitud de vacaciones",
+                empleados=None,
+                is_empleado=is_empleado,
+                empleado_actual=emp_actual,
+                today=date.today().isoformat(),
+            )
+    empleados = query("SELECT id_cedula, apellidos_nombre FROM empleado WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre")
+    return render_template(
+        "vacaciones_form.html",
+        active_page="Solicitud de vacaciones",
+        empleados=empleados,
+        is_empleado=False,
+        empleado_actual=None,
+        today=date.today().isoformat(),
+    )
+
+
+@app.route("/vacaciones")
+@login_required
+@module_required("permisos")
+def vacaciones_index():
+    """Listado de solicitudes de vacaciones (para Coordinación GH / Gestor)."""
+    if not _puede_aprobar_permisos():
+        return redirect(url_for("vacaciones_solicitar"))
+    rows = query(
+        "SELECT v.id, v.id_cedula, e.apellidos_nombre, v.fecha_solicitud, v.periodo_causado, v.dias_en_tiempo, v.dias_compensados_dinero, "
+        "v.fecha_inicio, v.fecha_fin, v.fecha_regreso, v.pago_anticipado, v.estado, v.fecha_resolucion "
+        "FROM solicitud_vacaciones v JOIN empleado e ON e.id_cedula = v.id_cedula ORDER BY v.fecha_solicitud DESC, v.id DESC"
+    )
+    return render_template(
+        "vacaciones_list.html",
+        active_page="Listado vacaciones",
+        rows=rows,
+    )
+
+
+@app.route("/vacaciones/mis-solicitudes")
+@login_required
+@module_required("permisos")
+def vacaciones_mis_solicitudes():
+    """Mis solicitudes de vacaciones (empleado o quien solicita para sí)."""
+    user = get_current_user()
+    id_cedula = (user.get("id_cedula") or "").strip()
+    if not id_cedula:
+        flash("No tiene cédula vinculada.", "error")
+        return redirect(url_for("vacaciones_solicitar"))
+    rows = query(
+        "SELECT id, fecha_solicitud, periodo_causado, dias_en_tiempo, dias_compensados_dinero, fecha_inicio, fecha_fin, fecha_regreso, pago_anticipado, estado, fecha_resolucion "
+        "FROM solicitud_vacaciones WHERE id_cedula = %s ORDER BY fecha_solicitud DESC",
+        (id_cedula,),
+    )
+    return render_template(
+        "vacaciones_mis_solicitudes.html",
+        active_page="Mis solicitudes de vacaciones",
+        rows=rows,
+    )
+
+
 
 
 @app.route("/permisos/<int:id>/aprobar", methods=["POST"])
@@ -1426,6 +1665,9 @@ def personal_activo():
         {"value": n_inactivos, "label": "Inactivos",     "icon": "person_off", "color": "orange"},
         {"value": deptos,    "label": "Departamentos",   "icon": "business",   "color": "blue"},
     ]
+    user = get_current_user()
+    perm = get_role_permission(user["rol"] or "") if user else "READ"
+    show_add_btn = perm in ("WRITE", "ALL")  # Solo Contratación, Coord. GH y Admin pueden agregar
     return render_template(
         "data_table.html", active_page="Personal Activo",
         rows=rows, columns=columns, stats=stats,
@@ -1435,7 +1677,7 @@ def personal_activo():
         personal_show_activos=show_activos,
         personal_show_inactivos=show_inactivos,
         personal_activo_url=url_for("personal_activo"),
-        show_add_btn=True, add_url=url_for("crear_empleado"),
+        show_add_btn=show_add_btn, add_url=url_for("crear_empleado"),
     )
 
 
@@ -1819,7 +2061,6 @@ def hijos_activos():
     sex_f = sum(1 for r in rows if r.get("sexo") == "F")
     padres_set = set(r["id_cedula"] for r in rows if r.get("id_cedula"))
     padres = len(padres_set)
-    stats_parent_options = sorted(padres_set) if padres_set else []
     columns = [
         {"key": "id_cedula",      "label": "Cédula Padre"},
         {"key": "nombre_padre",   "label": "Nombre Padre"},
@@ -1827,6 +2068,10 @@ def hijos_activos():
         {"key": "identificacion_hijo", "label": "Identificación"},
         {"key": "fecha_nacimiento",   "label": "Fecha Nacimiento"},
         {"key": "sexo",           "label": "Sexo", "type": "sex"},
+    ]
+    filter_columns = [
+        {"index": 0, "label": "Cédula Padre"},
+        {"index": 5, "label": "Sexo"},
     ]
     base_label = "Hijos Activos" if estado == "ACTIVO" else "Hijos Inactivos"
     base_icon = "child_care" if estado == "ACTIVO" else "child_friendly"
@@ -1842,8 +2087,7 @@ def hijos_activos():
     return render_template(
         "data_table.html", active_page=active_page,
         rows=rows, columns=columns, stats=stats,
-        stats_parent_options=stats_parent_options,
-        export_key=export_key,
+        export_key=export_key, filter_columns=filter_columns,
         hijos_estado_selector=True,
         hijos_estado_actual=estado,
         hijos_base_url=url_for("hijos_activos"),
@@ -3060,10 +3304,14 @@ def view_total_hijos():
         {"value": total_activos, "label": "Hijos Activos", "icon": "child_care", "color": "green"},
         {"value": total_inactivos, "label": "Hijos Inactivos", "icon": "child_friendly", "color": "orange"},
     ]
+    filter_columns = [
+        {"index": 0, "label": "Cédula"},
+        {"index": 2, "label": "Total Hijos"},
+    ]
     return render_template(
         "data_table.html", active_page="View Total Hijos",
         rows=rows, columns=columns, stats=stats,
-        export_key="view_total_hijos",
+        export_key="view_total_hijos", filter_columns=filter_columns,
     )
 
 

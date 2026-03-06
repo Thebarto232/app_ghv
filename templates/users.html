@@ -29,7 +29,7 @@
     <div class="toolbar-left">
         <div class="search-filter">
             <span class="material-symbols-outlined" style="font-size:18px;color:var(--text-secondary)">search</span>
-            <input type="text" id="tableFilter" placeholder="Buscar usuario..." autocomplete="off">
+            <input type="text" id="tableFilter" placeholder="Buscar en {{ rows|length }} registros..." autocomplete="off">
         </div>
         <select id="filterRol" class="form-input" style="width:auto;min-width:180px;margin-left:8px" title="Filtrar por rol">
             <option value="">Todos los roles</option>
@@ -39,12 +39,20 @@
         </select>
     </div>
     <div class="toolbar-right">
-        <span class="table-info" id="tableInfo">{{ rows|length }} usuarios</span>
+        <span class="table-info" id="tableInfo">{{ rows|length }} registros</span>
+        <div class="page-size-select">
+            <select id="pageSizeSelect">
+                <option value="25">25</option>
+                <option value="50" selected>50</option>
+                <option value="100">100</option>
+                <option value="0">Todos</option>
+            </select>
+        </div>
     </div>
 </div>
 
 <div class="table-wrapper">
-    <table class="data-table" id="mainTable">
+    <table class="data-table paginated-table" id="mainTable">
         <thead>
             <tr>
                 <th>ID</th>
@@ -98,6 +106,18 @@
             {% endfor %}
         </tbody>
     </table>
+    <div class="pagination-bar" id="paginationBar">
+        <div class="pagination-info">
+            Mostrando <strong id="pageStart">1</strong>-<strong id="pageEnd">0</strong> de <strong id="pageTotal">0</strong>
+        </div>
+        <div class="pagination-controls">
+            <button class="btn-page" id="btnFirst" title="Primera"><span class="material-symbols-outlined">first_page</span></button>
+            <button class="btn-page" id="btnPrev" title="Anterior"><span class="material-symbols-outlined">chevron_left</span></button>
+            <span class="page-indicator" id="pageIndicator">1 / 1</span>
+            <button class="btn-page" id="btnNext" title="Siguiente"><span class="material-symbols-outlined">chevron_right</span></button>
+            <button class="btn-page" id="btnLast" title="Última"><span class="material-symbols-outlined">last_page</span></button>
+        </div>
+    </div>
 </div>
 
 <!-- Modal Nuevo Usuario -->
@@ -291,6 +311,10 @@ document.addEventListener('click', function(e) {
     if (btn) { var d = btn.dataset; resetPwd(d.id, d.nombre || ''); }
 });
 
+var userVisibleRows = [];
+var userCurrentPage = 1;
+var userPageSize = 50;
+
 function applyTableFilters() {
     try {
         var filterInput = document.getElementById('tableFilter');
@@ -303,24 +327,71 @@ function applyTableFilters() {
             var opt = rolSelect.options[rolSelect.selectedIndex];
             rolFilter = (opt && opt.value || '').trim().toLowerCase();
         }
-        var vis = 0;
         if (!table || !table.tBodies || !table.tBodies[0]) return;
         var tbody = table.tBodies[0];
         var rows = tbody.querySelectorAll('tr');
+        userVisibleRows = [];
         for (var i = 0; i < rows.length; i++) {
             var tr = rows[i];
             var rolCell = tr.querySelector('td[data-rol]');
             var rowRol = (rolCell && (rolCell.getAttribute('data-rol') || '').trim() || '').toLowerCase();
             var rolMatch = !rolFilter || rowRol === rolFilter;
             var textMatch = !q || (tr.textContent || '').toLowerCase().indexOf(q) !== -1;
-            var show = rolMatch && textMatch;
-            tr.style.display = show ? '' : 'none';
-            if (show) vis++;
+            if (rolMatch && textMatch) userVisibleRows.push(tr);
         }
-        if (tableInfo) tableInfo.textContent = vis + ' usuarios';
+        if (tableInfo) tableInfo.textContent = userVisibleRows.length + ' registros';
+        userCurrentPage = 1;
+        renderUserPage();
     } catch (err) {
         console.warn('applyTableFilters:', err);
     }
+}
+
+function renderUserPage() {
+    var table = document.getElementById('mainTable');
+    var tbody = table && table.tBodies && table.tBodies[0];
+    if (!tbody) return;
+    var allRows = Array.from(tbody.querySelectorAll('tr'));
+    var pageSizeSelect = document.getElementById('pageSizeSelect');
+    var pageStart = document.getElementById('pageStart');
+    var pageEnd = document.getElementById('pageEnd');
+    var pageTotal = document.getElementById('pageTotal');
+    var pageIndicator = document.getElementById('pageIndicator');
+    var paginationBar = document.getElementById('paginationBar');
+    var pageSize = parseInt(pageSizeSelect && pageSizeSelect.value, 10) || 50;
+    userPageSize = pageSize;
+    var total = userVisibleRows.length;
+    if (total === 0) {
+        allRows.forEach(function(r) { r.classList.add('page-hidden'); });
+        if (pageStart) pageStart.textContent = '0';
+        if (pageEnd) pageEnd.textContent = '0';
+        if (pageTotal) pageTotal.textContent = '0';
+        if (pageIndicator) pageIndicator.textContent = '1 / 1';
+        if (paginationBar) paginationBar.style.display = 'flex';
+        document.getElementById('btnFirst').disabled = true;
+        document.getElementById('btnPrev').disabled = true;
+        document.getElementById('btnNext').disabled = true;
+        document.getElementById('btnLast').disabled = true;
+        return;
+    }
+    var totalPages = (pageSize === 0) ? 1 : Math.ceil(total / pageSize);
+    if (pageSize === 0) pageSize = total;
+    if (userCurrentPage > totalPages) userCurrentPage = totalPages;
+    var start = (userCurrentPage - 1) * pageSize;
+    var end = Math.min(start + pageSize, total);
+    allRows.forEach(function(r) { r.classList.add('page-hidden'); });
+    userVisibleRows.forEach(function(tr, i) {
+        if (i >= start && i < end) tr.classList.remove('page-hidden');
+    });
+    if (pageStart) pageStart.textContent = start + 1;
+    if (pageEnd) pageEnd.textContent = end;
+    if (pageTotal) pageTotal.textContent = total;
+    if (pageIndicator) pageIndicator.textContent = userCurrentPage + ' / ' + totalPages;
+    if (paginationBar) paginationBar.style.display = 'flex';
+    document.getElementById('btnFirst').disabled = userCurrentPage <= 1;
+    document.getElementById('btnPrev').disabled = userCurrentPage <= 1;
+    document.getElementById('btnNext').disabled = userCurrentPage >= totalPages;
+    document.getElementById('btnLast').disabled = userCurrentPage >= totalPages;
 }
 
 function setupFilters() {
@@ -335,9 +406,26 @@ document.addEventListener('DOMContentLoaded', function() {
         let cur = 0; const step = Math.ceil(target / 30);
         const t = setInterval(() => { cur += step; if (cur >= target) { cur = target; clearInterval(t); } el.textContent = cur; }, 16);
     });
-    // Filtro: aplicar al cargar
+    // Filtro y paginación al cargar
     setupFilters();
-    // Delegación en document: así el filtro sigue funcionando después de recargar (p. ej. tras inactivar)
+    // Paginación: botones y tamaño de página
+    document.getElementById('btnFirst') && document.getElementById('btnFirst').addEventListener('click', function() {
+        userCurrentPage = 1; renderUserPage();
+    });
+    document.getElementById('btnPrev') && document.getElementById('btnPrev').addEventListener('click', function() {
+        userCurrentPage--; renderUserPage();
+    });
+    document.getElementById('btnNext') && document.getElementById('btnNext').addEventListener('click', function() {
+        userCurrentPage++; renderUserPage();
+    });
+    document.getElementById('btnLast') && document.getElementById('btnLast').addEventListener('click', function() {
+        var ps = parseInt(document.getElementById('pageSizeSelect').value, 10) || 50;
+        userCurrentPage = ps === 0 ? 1 : Math.ceil(userVisibleRows.length / ps); renderUserPage();
+    });
+    document.getElementById('pageSizeSelect') && document.getElementById('pageSizeSelect').addEventListener('change', function() {
+        userCurrentPage = 1; renderUserPage();
+    });
+    // Delegación en document: filtro sigue funcionando después de recargar (p. ej. tras inactivar)
     document.addEventListener('input', function(e) {
         if (e.target.id === 'tableFilter' || e.target.id === 'filterRol') {
             setTimeout(applyTableFilters, 0);

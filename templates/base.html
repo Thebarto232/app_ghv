@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}APP_ORIONA{% endblock %}</title>
+    <title>{% block title %}Gestión Humana{% endblock %} | Colbeef</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
-<body>
+<body class="app-gestion-humana">
     <!-- HEADER -->
     <header class="topbar">
         <div class="topbar-left">
@@ -19,7 +19,10 @@
             </button>
             <a href="{{ url_for('home') }}" class="app-brand">
                 <img src="{{ url_for('static', filename='img/logo_colbeef.jpg') }}" alt="Colbeef" class="brand-logo">
-                <span class="app-title">Gestión Humana</span>
+                <div class="app-brand-text">
+                    <span class="app-title">Gestión Humana</span>
+                    <span class="app-subtitle">Sistema de personal y talento</span>
+                </div>
             </a>
         </div>
         <div class="topbar-center">
@@ -36,15 +39,51 @@
                 <span class="live-label">EN VIVO</span>
                 <span class="live-ts" id="liveTs"></span>
             </div>
-            <div class="user-info">
-                <span class="user-name">{{ current_user.nombre }}</span>
-                <span class="user-role">{{ current_user.rol }}</span>
-            </div>
-            <a href="{{ url_for('logout') }}" class="icon-btn" title="Cerrar sesión">
-                <span class="material-symbols-outlined">logout</span>
-            </a>
-            <div class="avatar" title="{{ current_user.email }}">
-                {{ current_user.nombre[0] if current_user.nombre else 'U' }}
+            <div class="profile-wrap" id="profileWrap">
+                <div class="profile-trigger" id="profileTrigger" title="Ver perfil y opciones">
+                    <form id="formFotoPerfil" action="{{ url_for('perfil_subir_foto') }}" method="post" enctype="multipart/form-data" style="display:inline" onclick="event.stopPropagation()">
+                        <input type="file" name="foto" id="inputFotoPerfil" accept="image/jpeg,image/png,image/webp,image/jpg" style="display:none">
+                        <label for="inputFotoPerfil" class="avatar avatar-label">
+                            {% if current_user.get('foto_perfil') %}
+                            <img src="{{ url_for('static', filename=current_user.foto_perfil) }}" alt="" class="avatar-img">
+                            {% else %}
+                            <span class="avatar-inicial">{{ current_user.nombre[0] if current_user.nombre else 'U' }}</span>
+                            {% endif %}
+                        </label>
+                    </form>
+                    <div class="profile-info-inline">
+                        <span class="user-name">{{ current_user.nombre }}</span>
+                        <span class="user-role">{{ current_user.rol }}</span>
+                        <span class="user-email">{{ current_user.email or '' }}</span>
+                    </div>
+                    <span class="material-symbols-outlined profile-chevron">expand_more</span>
+                </div>
+                <div class="profile-dropdown" id="profileDropdown">
+                    <div class="profile-dropdown-header">
+                        <div class="avatar avatar-dropdown">
+                            {% if current_user.get('foto_perfil') %}
+                            <img src="{{ url_for('static', filename=current_user.foto_perfil) }}" alt="" class="avatar-img">
+                            {% else %}
+                            <span class="avatar-inicial">{{ current_user.nombre[0] if current_user.nombre else 'U' }}</span>
+                            {% endif %}
+                        </div>
+                        <div class="profile-dropdown-meta">
+                            <span class="profile-dropdown-name">{{ current_user.nombre }}</span>
+                            <span class="profile-dropdown-rol-badge">{{ current_user.rol }}</span>
+                            <span class="profile-dropdown-email">{{ current_user.email or '—' }}</span>
+                        </div>
+                    </div>
+                    <div class="profile-dropdown-actions">
+                        <button type="button" class="profile-dropdown-btn" id="btnCambiarFoto">
+                            <span class="material-symbols-outlined">photo_camera</span>
+                            Cambiar foto
+                        </button>
+                        <a href="{{ url_for('logout') }}" class="profile-dropdown-btn profile-dropdown-logout">
+                            <span class="material-symbols-outlined">logout</span>
+                            Cerrar sesión
+                        </a>
+                    </div>
+                </div>
             </div>
             {% endif %}
         </div>
@@ -140,6 +179,18 @@
             <a href="{{ url_for('permisos_index') }}" class="nav-item {{ 'active' if active_page == 'Solicitud de permiso' }}">
                 <span class="material-symbols-outlined">assignment</span>
                 <span class="nav-label">Solicitud de permiso</span>
+            </a>
+            <a href="{{ url_for('vacaciones_solicitar') }}" class="nav-item {{ 'active' if active_page == 'Solicitud de vacaciones' }}">
+                <span class="material-symbols-outlined">beach_access</span>
+                <span class="nav-label">Solicitud de vacaciones</span>
+            </a>
+            <a href="{{ url_for('vacaciones_index') }}" class="nav-item {{ 'active' if active_page == 'Listado vacaciones' }}">
+                <span class="material-symbols-outlined">list</span>
+                <span class="nav-label">Listado vacaciones</span>
+            </a>
+            <a href="{{ url_for('vacaciones_mis_solicitudes') }}" class="nav-item {{ 'active' if active_page == 'Mis solicitudes de vacaciones' }}">
+                <span class="material-symbols-outlined">event_note</span>
+                <span class="nav-label">Mis vacaciones</span>
             </a>
         </div>
         {% endif %}
@@ -245,6 +296,29 @@
     <div id="toastContainer"></div>
 
     <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        var input = document.getElementById('inputFotoPerfil');
+        var form = document.getElementById('formFotoPerfil');
+        if (input && form) input.addEventListener('change', function() {
+            if (this.files && this.files.length) form.submit();
+        });
+        var wrap = document.getElementById('profileWrap');
+        var trigger = document.getElementById('profileTrigger');
+        var dropdown = document.getElementById('profileDropdown');
+        var btnCambiarFoto = document.getElementById('btnCambiarFoto');
+        if (trigger && dropdown) {
+            trigger.addEventListener('click', function(e) {
+                if (e.target.closest('label[for="inputFotoPerfil"]')) return;
+                wrap.classList.toggle('open');
+            });
+            document.addEventListener('click', function(e) {
+                if (wrap && !wrap.contains(e.target)) wrap.classList.remove('open');
+            });
+        }
+        if (btnCambiarFoto && input) btnCambiarFoto.addEventListener('click', function() { input.click(); });
+    });
+    </script>
     {% block scripts %}{% endblock %}
 </body>
 </html>

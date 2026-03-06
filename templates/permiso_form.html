@@ -10,12 +10,17 @@
         El <strong>Gestor de Contratación</strong> (gestor.contratacion@colbeef.com) le indicará cuándo debe llenar este formato.
         Una vez enviado, <strong>Coordinación Gestión Humana</strong> (coordinacion.gestionhumana@colbeef.com) aprobará o rechazará su solicitud y le informará por correo.
     </p>
+    {% if empleado_actual and not is_empleado %}
+    <p class="form-hint" style="margin-bottom:16px;padding:10px 14px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;color:#166534">
+        Usted está solicitando en su calidad de empleada. El área/cargo que aparece corresponde a su ficha en personal.
+    </p>
+    {% endif %}
 
-    <form method="POST" action="{{ url_for('permiso_solicitar') }}" id="formPermiso">
+    <form method="POST" action="{{ url_for('permiso_solicitar') }}" id="formPermiso" enctype="multipart/form-data">
         <div class="form-row">
             <div class="form-group" style="grid-column:1/-1">
                 <label class="form-label">Documento de identidad / Nombre completo<span class="required">*</span></label>
-                {% if is_empleado and empleado_actual %}
+                {% if empleado_actual %}
                 <input type="hidden" name="id_cedula" value="{{ empleado_actual.id_cedula }}">
                 <input type="text" class="form-input" value="{{ empleado_actual.apellidos_nombre }} ({{ empleado_actual.id_cedula }})" readonly disabled style="background:#f3f4f6;">
                 {% else %}
@@ -31,13 +36,22 @@
         <div class="form-row">
             <div class="form-group">
                 <label class="form-label">Área</label>
+                {% if empleado_actual %}
+                <input type="text" name="area" id="area" class="form-input" value="{{ empleado_actual.area or '' }}" readonly style="background:#f3f4f6;cursor:not-allowed;">
+                {% else %}
                 <input type="text" name="area" id="area" class="form-input" placeholder="Área / Departamento" value="">
+                {% endif %}
             </div>
             <div class="form-group">
                 <label class="form-label">Tipo<span class="required">*</span></label>
                 <select name="tipo" class="form-input" required>
                     <option value="Permiso">Permiso</option>
                     <option value="Licencia">Licencia</option>
+                    <option value="Médico">Médico</option>
+                    <option value="Personal">Personal</option>
+                    <option value="Capacitación">Capacitación</option>
+                    <option value="Calamidad doméstica">Calamidad doméstica</option>
+                    <option value="Otro">Otro</option>
                 </select>
             </div>
         </div>
@@ -52,21 +66,20 @@
             </div>
         </div>
         <div class="form-row">
-            <div class="form-group">
-                <label class="form-label">Permiso remunerado</label>
-                <select name="permiso_remunerado" class="form-input">
-                    <option value="">—</option>
-                    <option value="1">Sí</option>
-                    <option value="0">No</option>
+            <div class="form-group" style="grid-column:1/-1">
+                <label class="form-label">¿Permiso remunerado?<span class="required">*</span></label>
+                <select name="permiso_remunerado" id="permisoRemunerado" class="form-input" required>
+                    <option value="">— Seleccionar —</option>
+                    <option value="1">Sí (remunerado)</option>
+                    <option value="0">No (no remunerado)</option>
                 </select>
+                <p class="form-hint" style="margin-top:6px">Si es <strong>no remunerado</strong>, deberá adjuntar evidencia (documento o imagen) que soporte la solicitud.</p>
             </div>
-            <div class="form-group">
-                <label class="form-label">Permiso no remunerado</label>
-                <select name="permiso_no_remunerado" class="form-input">
-                    <option value="">—</option>
-                    <option value="1">Sí</option>
-                    <option value="0">No</option>
-                </select>
+        </div>
+        <div class="form-row permiso-evidencia-row" id="rowEvidencia" style="display:none">
+            <div class="form-group" style="grid-column:1/-1">
+                <label class="form-label">Adjuntar evidencia<span class="required">*</span> <span class="form-hint">(PDF, JPG, PNG – máx. 5 MB)</span></label>
+                <input type="file" name="evidencia" id="evidencia" class="form-input" accept=".pdf,.jpg,.jpeg,.png">
             </div>
         </div>
         <div class="form-row">
@@ -106,11 +119,21 @@
             area.value = a;
         });
     }
-    {% if is_empleado and empleado_actual %}
-    if (document.getElementById('area') && '{{ empleado_actual.area or '' }}') {
-        document.getElementById('area').value = '{{ empleado_actual.area or '' }}';
+    var remunerado = document.getElementById('permisoRemunerado');
+    var rowEvidencia = document.getElementById('rowEvidencia');
+    var evidenciaInput = document.getElementById('evidencia');
+    function toggleEvidencia() {
+        var esNoRemunerado = remunerado && remunerado.value === '0';
+        if (rowEvidencia) rowEvidencia.style.display = esNoRemunerado ? '' : 'none';
+        if (evidenciaInput) {
+            evidenciaInput.required = esNoRemunerado;
+            if (!esNoRemunerado) evidenciaInput.value = '';
+        }
     }
-    {% endif %}
+    if (remunerado) {
+        remunerado.addEventListener('change', toggleEvidencia);
+        toggleEvidencia();
+    }
 })();
 </script>
 {% endblock %}

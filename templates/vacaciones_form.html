@@ -1,0 +1,88 @@
+{% extends "base_empleado.html" if is_empleado else "base.html" %}
+
+{% block content %}
+<div class="detail-card" style="max-width:720px">
+    <h3 class="form-section-title" style="color:var(--colbeef-green, #2D9E3F)">
+        <span class="material-symbols-outlined">beach_access</span>
+        Solicitud de vacaciones <small style="font-weight:normal;color:#666">Gestión Humana – Colbeef S.A.S</small>
+    </h3>
+    <p class="form-hint" style="margin-bottom:20px">
+        Diligencie los datos de la solicitud de vacaciones. Coordinación Gestión Humana revisará y dará respuesta.
+    </p>
+    {% if empleado_actual and not is_empleado %}
+    <p class="form-hint" style="margin-bottom:16px;padding:10px 14px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;color:#166534">
+        Usted está solicitando en su calidad de empleado(a).
+    </p>
+    {% endif %}
+
+    <form method="POST" action="{{ url_for('vacaciones_solicitar') }}" id="formVacaciones">
+        <div class="form-row">
+            <div class="form-group" style="grid-column:1/-1">
+                <label class="form-label">Cédula / Nombre completo<span class="required">*</span></label>
+                {% if empleado_actual %}
+                <input type="hidden" name="id_cedula" value="{{ empleado_actual.id_cedula }}">
+                <input type="text" class="form-input" value="{{ empleado_actual.apellidos_nombre }} ({{ empleado_actual.id_cedula }})" readonly disabled style="background:#f3f4f6;">
+                {% else %}
+                <select name="id_cedula" class="form-input" required id="id_cedula">
+                    <option value="">— Seleccionar empleado —</option>
+                    {% for e in empleados or [] %}
+                    <option value="{{ e.id_cedula }}">{{ e.apellidos_nombre }} ({{ e.id_cedula }})</option>
+                    {% endfor %}
+                </select>
+                {% endif %}
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Fecha de solicitud<span class="required">*</span></label>
+                <input type="date" name="fecha_solicitud" class="form-input" required value="{{ today|default('') }}">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Periodo de vacaciones causadas</label>
+                <input type="text" name="periodo_causado" class="form-input" placeholder="Ej: 2024-01-01 a 2024-12-31">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Días en tiempo</label>
+                <input type="number" name="dias_en_tiempo" class="form-input" min="0" placeholder="Días a disfrutar">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Días compensados en dinero</label>
+                <input type="number" name="dias_compensados_dinero" class="form-input" min="0" placeholder="Días a compensar">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Fecha de inicio<span class="required">*</span></label>
+                <input type="date" name="fecha_inicio" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Fecha final<span class="required">*</span></label>
+                <input type="date" name="fecha_fin" class="form-input" required>
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">Fecha de regreso<span class="required">*</span></label>
+                <input type="date" name="fecha_regreso" class="form-input" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Pago de vacaciones anticipadas</label>
+                <select name="pago_anticipado" class="form-input">
+                    <option value="">—</option>
+                    <option value="1">Sí</option>
+                    <option value="0">No</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-actions">
+            <button type="submit" class="btn btn-primary">
+                <span class="material-symbols-outlined" style="font-size:18px">send</span>
+                Enviar solicitud
+            </button>
+            <a href="{{ url_for('empleado_portal') if is_empleado else url_for('vacaciones_index') }}" class="btn btn-outline">Cancelar</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

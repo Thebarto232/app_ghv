@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """Envío de correos para notificaciones de solicitud de permiso."""
+import os
 import re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from email.utils import formataddr
 from html import escape as html_escape
 
@@ -63,12 +66,13 @@ def _wrap_html(content_body, title, subtitle=""):
 </html>"""
 
 
-def send_mail(to_emails, subject, body_html, body_text=None, cc=None, app=None):
+def send_mail(to_emails, subject, body_html, body_text=None, cc=None, app=None, attachments=None):
     """
     Envía un correo vía SMTP.
     to_emails: lista de correos o un solo string.
     cc: lista opcional de CC (para pruebas).
     app: instancia Flask (usa app.config). Si no se pasa, no envía.
+    attachments: lista opcional de (nombre_archivo, ruta_archivo) para adjuntar al correo.
     """
     if app is None:
         return False
@@ -89,14 +93,30 @@ def send_mail(to_emails, subject, body_html, body_text=None, cc=None, app=None):
     if app.config.get("MAIL_PRUEBAS_CC"):
         cc_list = cc_list + [e.strip() for e in app.config["MAIL_PRUEBAS_CC"].split(",") if e.strip()]
     try:
-        msg = MIMEMultipart("alternative")
+        has_attachments = attachments and len(attachments) > 0
+        msg = MIMEMultipart("mixed" if has_attachments else "alternative")
         msg["Subject"] = subject
         msg["From"] = formataddr(("Gestión Humana Colbeef", app.config.get("MAIL_FROM") or app.config.get("MAIL_USER")))
         msg["To"] = ", ".join(to_list)
         if cc_list:
             msg["Cc"] = ", ".join(cc_list)
-        msg.attach(MIMEText(body_text or body_html, "plain", "utf-8"))
-        msg.attach(MIMEText(body_html, "html", "utf-8"))
+        if has_attachments:
+            part_body = MIMEMultipart("alternative")
+            part_body.attach(MIMEText(body_text or body_html, "plain", "utf-8"))
+            part_body.attach(MIMEText(body_html, "html", "utf-8"))
+            msg.attach(part_body)
+            for nombre, ruta in attachments:
+                if not ruta or not os.path.isfile(ruta):
+                    continue
+                with open(ruta, "rb") as f:
+                    part = MIMEBase("application", "octet-stream")
+                    part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition", "attachment", filename=nombre)
+                msg.attach(part)
+        else:
+            msg.attach(MIMEText(body_text or body_html, "plain", "utf-8"))
+            msg.attach(MIMEText(body_html, "html", "utf-8"))
         host = app.config.get("MAIL_HOST", "smtp.gmail.com")
         port = app.config.get("MAIL_PORT", 587)
         use_ssl = port == 465 or app.config.get("MAIL_USE_SSL", False)
@@ -144,14 +164,20 @@ def _strip_html(html):
     return t
 
 
-def notificar_nueva_solicitud_permiso(app, solicitud, empleado_nombre, empleado_email):
+def notificar_nueva_solicitud_permiso(app, solicitud, empleado_nombre, empleado_email, evidencia_path=None):
     """
     Notifica por separado:
     - coordinacion.gestionhumana@colbeef.com (MAIL_GH_PERMISOS): es quien APRUEBA o RECHAZA el permiso.
     - gestor.contratacion@colbeef.com (MAIL_GESTOR_CONTRATACION): se le informa que el empleado ya diligenció el formato.
+    evidencia_path: ruta absoluta del archivo adjunto (permiso no remunerado); se incluye en el correo.
     """
     tabla = _tabla_detalle_solicitud(solicitud, empleado_nombre=empleado_nombre, incluir_empleado=True)
     ok = False
+    attachments = []
+    if evidencia_path and os.path.isfile(evidencia_path):
+        attachments = [(os.path.basename(evidencia_path), evidencia_path)]
+
+    nota_evidencia = "<p><strong>Se adjunta la evidencia</strong> enviada por el empleado (permiso no remunerado).</p>" if attachments else ""
 
     # Correo a Coordinación GH
     gh = (app.config.get("MAIL_GH_PERMISOS") or "").strip()
@@ -161,13 +187,14 @@ def notificar_nueva_solicitud_permiso(app, solicitud, empleado_nombre, empleado_
         <p>Estimado/a Coordinación Gestión Humana,</p>
         <p>Se ha registrado una <strong>nueva solicitud de permiso</strong> en el sistema. Por favor revise los datos y resuelva la solicitud (aprobar o rechazar).</p>
         {tabla}
+        {nota_evidencia}
         <div class="mail-divider"></div>
         <p><strong>Usted es quien aprueba o rechaza el permiso.</strong> Ingrese al sistema para resolver esta solicitud. Agradecemos una respuesta a la brevedad para confirmar que recibió esta notificación.</p>
         <p>Saludos cordiales,<br/><strong>Sistema de Gestión Humana – Colbeef</strong></p>
         """
         body_gh = _wrap_html(body_gh_content, title=subject_gh, subtitle="Nueva solicitud de permiso")
         plain_gh = _strip_html(body_gh_content)
-        if send_mail(gh, subject_gh, body_gh, body_text=plain_gh, app=app):
+        if send_mail(gh, subject_gh, body_gh, body_text=plain_gh, app=app, attachments=attachments):
             ok = True
 
     # Correo a Gestor de Contratación
@@ -178,13 +205,14 @@ def notificar_nueva_solicitud_permiso(app, solicitud, empleado_nombre, empleado_
         <p>Estimado/a Gestor de Contratación,</p>
         <p>El empleado <strong>{html_escape(empleado_nombre)}</strong> ya diligenció el formato de permiso en el sistema. A continuación el detalle de la solicitud:</p>
         {tabla}
+        {nota_evidencia}
         <div class="mail-divider"></div>
         <p>Coordinación Gestión Humana es quien aprobará o rechazará esta solicitud. Si necesita más detalles, puede contactar al empleado o a Coordinación GH.</p>
         <p>Saludos cordiales,<br/><strong>Sistema de Gestión Humana – Colbeef</strong></p>
         """
         body_gestor = _wrap_html(body_gestor_content, title=subject_gestor, subtitle="Formato de permiso diligenciado")
         plain_gestor = _strip_html(body_gestor_content)
-        if send_mail(gestor, subject_gestor, body_gestor, body_text=plain_gestor, app=app):
+        if send_mail(gestor, subject_gestor, body_gestor, body_text=plain_gestor, app=app, attachments=attachments):
             ok = True
 
     if app and hasattr(app, "logger"):

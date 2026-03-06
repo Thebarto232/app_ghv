@@ -104,6 +104,27 @@
         </div>
     </a>
     {% endif %}
+
+    {% if vm.permisos %}
+    <a href="{{ url_for('permisos_index') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #f0fdf4, #dcfce7)">
+            <span class="material-symbols-outlined" style="color:#16a34a">assignment</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot green"></span>
+            Solicitud de permiso
+        </div>
+    </a>
+    <a href="{{ url_for('vacaciones_solicitar') }}" class="home-card">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #e0f2fe, #bae6fd)">
+            <span class="material-symbols-outlined" style="color:#0284c7">beach_access</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot blue"></span>
+            Solicitud de vacaciones
+        </div>
+    </a>
+    {% endif %}
     </div>
 </div>
 {% endblock %}

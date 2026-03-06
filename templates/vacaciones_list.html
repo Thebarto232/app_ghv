@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-toolbar" style="margin-bottom:16px">
+    <a href="{{ url_for('vacaciones_solicitar') }}" class="btn btn-primary btn-sm">
+        <span class="material-symbols-outlined" style="font-size:18px">add</span>
+        Nueva solicitud de vacaciones
+    </a>
+</div>
+<div class="table-wrapper">
+    {% if rows %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Cédula</th>
+                <th>Empleado</th>
+                <th>Fecha solicitud</th>
+                <th>Periodo causado</th>
+                <th>Días tiempo</th>
+                <th>Días comp.</th>
+                <th>Desde</th>
+                <th>Hasta</th>
+                <th>Regreso</th>
+                <th>Pago anticipado</th>
+                <th>Estado</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in rows %}
+            <tr>
+                <td>{{ r.id_cedula }}</td>
+                <td>{{ r.apellidos_nombre }}</td>
+                <td>{{ r.fecha_solicitud.strftime('%d/%m/%Y') if r.fecha_solicitud else '—' }}</td>
+                <td>{{ r.periodo_causado or '—' }}</td>
+                <td>{{ r.dias_en_tiempo if r.dias_en_tiempo is not none else '—' }}</td>
+                <td>{{ r.dias_compensados_dinero if r.dias_compensados_dinero is not none else '—' }}</td>
+                <td>{{ r.fecha_inicio.strftime('%d/%m/%Y') if r.fecha_inicio else '—' }}</td>
+                <td>{{ r.fecha_fin.strftime('%d/%m/%Y') if r.fecha_fin else '—' }}</td>
+                <td>{{ r.fecha_regreso.strftime('%d/%m/%Y') if r.fecha_regreso else '—' }}</td>
+                <td>{% if r.pago_anticipado == 1 %}Sí{% elif r.pago_anticipado == 0 %}No{% else %}—{% endif %}</td>
+                <td>
+                    {% if r.estado == 'PENDIENTE' %}
+                    <span class="badge badge-warning">PENDIENTE</span>
+                    {% elif r.estado == 'APROBADO' %}
+                    <span class="badge badge-active">APROBADO</span>
+                    {% else %}
+                    <span class="badge badge-inactive">{{ r.estado }}</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <span class="material-symbols-outlined">beach_access</span>
+        <p>No hay solicitudes de vacaciones registradas.</p>
+        <a href="{{ url_for('vacaciones_solicitar') }}" class="btn btn-primary btn-sm" style="margin-top:12px">Nueva solicitud</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

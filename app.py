@@ -681,7 +681,18 @@ def empleado_cambiar_password():
     return render_template("empleado_cambiar_password.html", active_page="Cambiar contraseña")
 
 
-# ── HOME ─────────────────────────────────────────────────────
+# ── HOME Y DESCARGA PRESENTACIÓN ─────────────────────────────
+
+@app.route("/descargar/presentacion")
+@login_required
+def descargar_presentacion():
+    """Descarga la presentación PowerPoint del proyecto (presentacion_gestio_humana.pptx)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presentacion_gestio_humana.pptx")
+    if not os.path.isfile(path):
+        flash("El archivo de presentación no está disponible.", "info")
+        return redirect(url_for("home"))
+    return send_file(path, as_attachment=True, download_name="presentacion_gestio_humana.pptx", mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+
 
 @app.route("/")
 @login_required
@@ -1314,6 +1325,7 @@ def permiso_solicitar():
         if is_empleado:
             return redirect(url_for("empleado_mis_solicitudes"))
         return redirect(url_for("permisos_index"))
+    now_fecha = datetime.now().strftime("%d-%m-%Y")
     # Solicitud para sí mismo: usuario con id_cedula (EMPLEADO o BIENESTAR SOCIAL u otro rol en la lista)
     if id_cedula_empleado:
         emp_actual = query(
@@ -1327,6 +1339,9 @@ def permiso_solicitar():
                 empleados=None,
                 is_empleado=is_empleado,
                 empleado_actual=emp_actual,
+                now_fecha=now_fecha,
+                nombreCompleto_valor=emp_actual.get("apellidos_nombre"),
+                cedula_valor=emp_actual.get("id_cedula"),
             )
     empleados = query("SELECT id_cedula, apellidos_nombre, area FROM empleado WHERE estado = 'ACTIVO' ORDER BY apellidos_nombre")
     return render_template(
@@ -1335,6 +1350,9 @@ def permiso_solicitar():
         empleados=empleados,
         is_empleado=False,
         empleado_actual=None,
+        now_fecha=now_fecha,
+        nombreCompleto_valor=None,
+        cedula_valor=None,
     )
 
 
@@ -1482,8 +1500,39 @@ def permiso_aprobar(id):
     emp = query("SELECT apellidos_nombre, direccion_email FROM empleado WHERE id_cedula = %s", (solicitud["id_cedula"],), one=True)
     attachments = []
     evidencia_ruta = (solicitud.get("evidencia") or "").strip()
-    firma_path = (current_app.config.get("SIGNATURE_IMAGE_PATH") or "").strip()
-    if evidencia_ruta and firma_path:
+    # Firma digital: misma imagen que en el correo. Prioridad: "firma digital cindy.png" en la raíz, luego SIGNATURE_IMAGE_PATH.
+    root = getattr(current_app, "root_path", None) or os.path.dirname(os.path.abspath(__file__))
+    firma_en_raiz = os.path.join(root, "firma digital cindy.png")
+    firma_cfg = (current_app.config.get("SIGNATURE_IMAGE_PATH") or "").strip()
+    if os.path.isfile(firma_en_raiz):
+        firma_path_abs = firma_en_raiz
+    elif firma_cfg and os.path.isfile(firma_cfg):
+        firma_path_abs = firma_cfg if os.path.isabs(firma_cfg) else os.path.join(current_app.static_folder, firma_cfg)
+    else:
+        firma_path_abs = None
+    # PDF informe: formulario GH-FR-007 con datos diligenciados y firma de Coordinación (siempre al aprobar)
+    temp_informe = None
+    try:
+        from pdf_informe_permiso import generar_informe_permiso_pdf
+        fd, temp_informe = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        if generar_informe_permiso_pdf(solicitud, emp["apellidos_nombre"] if emp else "", temp_informe, firma_image_path=firma_path_abs):
+            attachments.append(("Informe_permiso_GH-FR-007.pdf", temp_informe))
+        elif temp_informe and os.path.isfile(temp_informe):
+            try:
+                os.unlink(temp_informe)
+            except Exception:
+                pass
+            temp_informe = None
+    except Exception:
+        if temp_informe and os.path.isfile(temp_informe):
+            try:
+                os.unlink(temp_informe)
+            except Exception:
+                pass
+        temp_informe = None
+    # Opcional: si la evidencia subida era PDF, además se envía el PDF firmado (estampado)
+    if evidencia_ruta and firma_path_abs and os.path.isfile(firma_path_abs):
         evidencia_full = os.path.join(current_app.instance_path, "uploads", evidencia_ruta)
         if os.path.isfile(evidencia_full) and evidencia_full.lower().endswith(".pdf"):
             temp_pdf = None
@@ -1491,7 +1540,7 @@ def permiso_aprobar(id):
                 from pdf_firma import firmar_pdf
                 fd, temp_pdf = tempfile.mkstemp(suffix=".pdf")
                 os.close(fd)
-                if firmar_pdf(evidencia_full, firma_path, temp_pdf, posicion="bottom_right"):
+                if firmar_pdf(evidencia_full, firma_path_abs, temp_pdf, posicion="gh_celda_firma"):
                     attachments.append(("Formato_permiso_firmado.pdf", temp_pdf))
                 elif temp_pdf and os.path.isfile(temp_pdf):
                     try:
@@ -1519,7 +1568,10 @@ def permiso_aprobar(id):
     except Exception:
         pass  # columnas no existen si no se ejecutó migration_correo_resolucion_validar.sql
     if correo_ok:
-        flash("Solicitud aprobada. Se ha notificado al empleado por correo.", "success")
+        if attachments:
+            flash("Solicitud aprobada. Se notificó al empleado por correo con el informe en PDF (formato GH-FR-007 y firma digital) adjunto.", "success")
+        else:
+            flash("Solicitud aprobada. Se ha notificado al empleado por correo.", "success")
     else:
         flash("Solicitud aprobada. No se pudo enviar el correo al empleado (revisar consola y MAIL_PASSWORD en .env).", "warning")
     if _is_api_request() or request.headers.get("X-Requested-With") == "XMLHttpRequest":

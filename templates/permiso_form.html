@@ -1,104 +1,211 @@
 {% extends "base_empleado.html" if is_empleado else "base.html" %}
 
 {% block content %}
-<div class="detail-card" style="max-width:720px">
-    <h3 class="form-section-title" style="color:var(--colbeef-green, #2D9E3F)">
-        <span class="material-symbols-outlined">assignment</span>
-        Formato de autorización de permiso o licencia <small style="font-weight:normal;color:#666">(GH-FR-007)</small>
-    </h3>
-    <p class="form-hint" style="margin-bottom:20px">
-        El <strong>Gestor de Contratación</strong> (gestor.contratacion@colbeef.com) le indicará cuándo debe llenar este formato.
-        Una vez enviado, <strong>Coordinación Gestión Humana</strong> (coordinacion.gestionhumana@colbeef.com) aprobará o rechazará su solicitud y le informará por correo.
+<style>
+/* Formato GH-FR-007: igual al documento oficial */
+.gh-formato-wrap { max-width: 720px; margin: 0 auto; }
+.gh-formato-doc { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(0,0,0,.06); }
+.gh-formato-header { display: flex; align-items: flex-start; gap: 20px; padding: 20px 24px; border-bottom: 1px solid #e5e7eb; background: #fafafa; }
+.gh-formato-logo { flex-shrink: 0; }
+.gh-formato-logo img { height: 48px; display: block; }
+.gh-formato-meta { flex: 1; }
+.gh-formato-meta table { border-collapse: collapse; font-size: 13px; }
+.gh-formato-meta td { padding: 4px 12px 4px 0; vertical-align: top; }
+.gh-formato-meta .celda-izq { font-weight: 600; color: #111; }
+.gh-formato-meta .celda-der { color: #374151; }
+.gh-formato-titulo { padding: 16px 24px 12px; font-size: 18px; font-weight: 700; color: #0b3518; letter-spacing: -0.2px; }
+.gh-formato-titulo-sub { padding: 0 24px 16px; font-size: 12px; color: #6b7280; }
+.gh-formato-body { padding: 8px 24px 24px; }
+.gh-formato-fila { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; align-items: end; }
+.gh-formato-fila.una { grid-template-columns: 1fr; }
+.gh-formato-fila.dos { grid-template-columns: 1fr 1fr; }
+.gh-formato-fila.tres { grid-template-columns: 1fr 1fr 1fr; }
+.gh-formato-label { font-size: 13px; font-weight: 500; color: #374151; margin-bottom: 4px; }
+.gh-formato-label .required { color: #dc2626; }
+.gh-formato-input { width: 100%; padding: 8px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
+.gh-formato-input:read-only, .gh-formato-input[readonly] { background: #f3f4f6; color: #4b5563; }
+.gh-formato-motivo { min-height: 72px; resize: vertical; }
+.gh-formato-divider { height: 1px; background: #e5e7eb; margin: 24px 0 20px; }
+.gh-formato-firmas { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin-top: 20px; }
+.gh-formato-firma-celda { padding: 16px 12px; text-align: center; border-right: 1px solid #e5e7eb; background: #fafafa; min-height: 100px; }
+.gh-formato-firma-celda:last-child { border-right: none; }
+.gh-formato-firma-celda .tit { font-size: 12px; font-weight: 600; color: #374151; margin-bottom: 8px; text-transform: uppercase; letter-spacing: .3px; }
+.gh-formato-firma-celda .sub { font-size: 11px; color: #6b7280; margin-top: 12px; }
+.gh-formato-firma-gh { background: #f0fdf4; color: #166534; }
+.gh-formato-firma-gh .tit { color: #166534; }
+.gh-formato-firma-gh .nota { font-size: 11px; color: #15803d; margin-top: 8px; }
+.gh-formato-actions { margin-top: 24px; padding-top: 20px; border-top: 1px solid #e5e7eb; display: flex; gap: 12px; flex-wrap: wrap; }
+.gh-formato-hint { font-size: 12px; color: #6b7280; margin-bottom: 16px; padding: 10px 14px; background: #f9fafb; border-radius: 8px; border: 1px solid #e5e7eb; }
+.gh-formato-hint strong { color: #111; }
+</style>
+
+<div class="gh-formato-wrap">
+    <p class="gh-formato-hint">
+        Este es el <strong>formato oficial de autorización de permisos / licencias (GH-FR-007)</strong>. El mismo formato es el que usa toda la empresa. Al aprobar, <strong>Coordinación Gestión Humana</strong> (coordinacion.gestionhumana@colbeef.com) firmará digitalmente en la celda «Firma Recibido Gestión Humana» y recibirá el documento por correo.
     </p>
     {% if empleado_actual and not is_empleado %}
-    <p class="form-hint" style="margin-bottom:16px;padding:10px 14px;background:#f0fdf4;border-radius:8px;border:1px solid #bbf7d0;color:#166534">
-        Usted está solicitando en su calidad de empleada. El área/cargo que aparece corresponde a su ficha en personal.
+    <p class="gh-formato-hint" style="background:#f0fdf4;border-color:#bbf7d0;color:#166534">
+        Usted está solicitando en su calidad de empleada. El área que aparece corresponde a su ficha en personal.
     </p>
     {% endif %}
 
     <form method="POST" action="{{ url_for('permiso_solicitar') }}" id="formPermiso" enctype="multipart/form-data">
-        <div class="form-row">
-            <div class="form-group" style="grid-column:1/-1">
-                <label class="form-label">Documento de identidad / Nombre completo<span class="required">*</span></label>
-                {% if empleado_actual %}
-                <input type="hidden" name="id_cedula" value="{{ empleado_actual.id_cedula }}">
-                <input type="text" class="form-input" value="{{ empleado_actual.apellidos_nombre }} ({{ empleado_actual.id_cedula }})" readonly disabled style="background:#f3f4f6;">
-                {% else %}
-                <select name="id_cedula" class="form-input" required id="id_cedula">
-                    <option value="">— Seleccionar empleado —</option>
-                    {% for e in empleados or [] %}
-                    <option value="{{ e.id_cedula }}" data-area="{{ e.area or '' }}">{{ e.apellidos_nombre }} ({{ e.id_cedula }})</option>
-                    {% endfor %}
-                </select>
-                {% endif %}
+        <div class="gh-formato-doc">
+            <!-- Encabezado igual al formato oficial -->
+            <div class="gh-formato-header">
+                <div class="gh-formato-logo">
+                    <img src="{{ url_for('static', filename='img/logo_colbeef.png') }}" alt="Colbeef">
+                </div>
+                <div class="gh-formato-meta">
+                    <table>
+                        <tr><td class="celda-izq">COLBEEF S.A.S</td><td class="celda-der">Código: GH-FR-007</td></tr>
+                        <tr><td class="celda-izq">GESTION HUMANA</td><td class="celda-der">Versión: 01</td></tr>
+                    </table>
+                </div>
+            </div>
+            <div class="gh-formato-titulo">FORMATO DE AUTORIZACION DE PERMISOS / LICENCIAS</div>
+            <div class="gh-formato-titulo-sub">Fecha: {{ now_fecha|default('') }}</div>
+
+            <div class="gh-formato-body">
+                <!-- Fila: Fecha, Área, Documento de Identidad -->
+                <div class="gh-formato-fila tres">
+                    <div class="form-group">
+                        <label class="gh-formato-label">Fecha</label>
+                        <input type="text" class="gh-formato-input" value="{{ now_fecha|default('') }}" readonly>
+                    </div>
+                    <div class="form-group">
+                        <label class="gh-formato-label">Área</label>
+                        {% if empleado_actual %}
+                        <input type="text" name="area" id="area" class="gh-formato-input" value="{{ empleado_actual.area or '' }}" readonly>
+                        {% else %}
+                        <input type="text" name="area" id="area" class="gh-formato-input" placeholder="Área">
+                        {% endif %}
+                    </div>
+                    <div class="form-group">
+                        <label class="gh-formato-label">Documento de Identidad</label>
+                        {% if empleado_actual %}
+                        <input type="text" class="gh-formato-input" value="{{ empleado_actual.id_cedula }}" readonly>
+                        <input type="hidden" name="id_cedula" value="{{ empleado_actual.id_cedula }}">
+                        {% else %}
+                        <select name="id_cedula" class="gh-formato-input" required id="id_cedula">
+                            <option value="">— Seleccionar —</option>
+                            {% for e in empleados or [] %}
+                            <option value="{{ e.id_cedula }}" data-area="{{ e.area or '' }}" data-nombre="{{ e.apellidos_nombre or '' }}">{{ e.id_cedula }} – {{ e.apellidos_nombre or '' }}</option>
+                            {% endfor %}
+                        </select>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Nombre Completo -->
+                <div class="gh-formato-fila una" style="margin-bottom:16px">
+                    <div class="form-group">
+                        <label class="gh-formato-label">Nombre Completo <span class="required">*</span></label>
+                        {% if empleado_actual %}
+                        <input type="text" class="gh-formato-input" value="{{ empleado_actual.apellidos_nombre }}" readonly>
+                        {% else %}
+                        <input type="text" class="gh-formato-input" id="nombreCompleto" value="" readonly placeholder="Seleccione documento de identidad">
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Fecha del permiso / Licencia -->
+                <div class="gh-formato-fila una" style="margin-bottom:16px">
+                    <div class="form-group">
+                        <label class="gh-formato-label">Fecha del permiso / Licencia <span class="required">*</span></label>
+                        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                            <input type="date" name="fecha_desde" class="gh-formato-input" required style="max-width:160px">
+                            <span>a</span>
+                            <input type="date" name="fecha_hasta" class="gh-formato-input" required style="max-width:160px">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Permiso remunerado / No remunerado -->
+                <div class="gh-formato-fila dos" style="margin-bottom:16px">
+                    <div class="form-group">
+                        <label class="gh-formato-label">Permiso remunerado / Permiso No Remunerado <span class="required">*</span></label>
+                        <select name="permiso_remunerado" id="permisoRemunerado" class="gh-formato-input" required>
+                            <option value="">— Seleccionar —</option>
+                            <option value="1">Remunerado</option>
+                            <option value="0">No Remunerado</option>
+                        </select>
+                        <p class="gh-formato-label" style="margin-top:6px;font-weight:400;font-size:12px">Si es no remunerado debe adjuntar evidencia (PDF o imagen).</p>
+                    </div>
+                </div>
+
+                <!-- Evidencia (solo si no remunerado) -->
+                <div class="gh-formato-fila una permiso-evidencia-row" id="rowEvidencia" style="display:none; margin-bottom:16px">
+                    <div class="form-group">
+                        <label class="gh-formato-label">Adjuntar evidencia <span class="required">*</span> <span style="font-size:12px;color:#6b7280">(PDF, JPG, PNG – máx. 5 MB)</span></label>
+                        <input type="file" name="evidencia" id="evidencia" class="gh-formato-input" accept=".pdf,.jpg,.jpeg,.png">
+                    </div>
+                </div>
+
+                <!-- Hora de Inicio / Hora Final -->
+                <div class="gh-formato-fila dos" style="margin-bottom:16px">
+                    <div class="form-group">
+                        <label class="gh-formato-label">Hora de Inicio</label>
+                        <input type="time" name="hora_inicio" class="gh-formato-input" value="">
+                    </div>
+                    <div class="form-group">
+                        <label class="gh-formato-label">Hora Final</label>
+                        <input type="time" name="hora_fin" class="gh-formato-input" value="">
+                    </div>
+                </div>
+
+                <!-- Motivo -->
+                <div class="gh-formato-fila una" style="margin-bottom:8px">
+                    <div class="form-group">
+                        <label class="gh-formato-label">Motivo</label>
+                        <textarea name="motivo" class="gh-formato-input gh-formato-motivo" rows="3" placeholder="Indique el motivo del permiso o licencia"></textarea>
+                    </div>
+                </div>
+
+                <!-- Tipo (mantener para BD, puede ir oculto o como selector) -->
+                <div class="gh-formato-fila una" style="margin-bottom:8px">
+                    <div class="form-group">
+                        <label class="gh-formato-label">Tipo <span class="required">*</span></label>
+                        <select name="tipo" class="gh-formato-input" required style="max-width:220px">
+                            <option value="Permiso">Permiso</option>
+                            <option value="Licencia">Licencia</option>
+                            <option value="Médico">Médico</option>
+                            <option value="Personal">Personal</option>
+                            <option value="Capacitación">Capacitación</option>
+                            <option value="Calamidad doméstica">Calamidad doméstica</option>
+                            <option value="Otro">Otro</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="gh-formato-divider"></div>
+
+                <!-- Bloque de firmas: igual al formato oficial -->
+                <div class="gh-formato-firmas">
+                    <div class="gh-formato-firma-celda">
+                        <div class="tit">Firma Solicitante</div>
+                        <div class="sub">
+                            {% if empleado_actual %}
+                            Nombre: {{ empleado_actual.apellidos_nombre }}<br>
+                            C.C: {{ empleado_actual.id_cedula }}
+                            {% else %}
+                            Nombre: {{ nombreCompleto_valor or '' }}<br>
+                            C.C: {{ cedula_valor or '' }}
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="gh-formato-firma-celda">
+                        <div class="tit">V.B Jefe Inmediato</div>
+                    </div>
+                    <div class="gh-formato-firma-celda gh-formato-firma-gh">
+                        <div class="tit">Firma Recibido Gestión Humana</div>
+                        <div class="nota">Se firmará digitalmente al aprobar (Coordinación)</div>
+                    </div>
+                </div>
             </div>
         </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label class="form-label">Área</label>
-                {% if empleado_actual %}
-                <input type="text" name="area" id="area" class="form-input" value="{{ empleado_actual.area or '' }}" readonly style="background:#f3f4f6;cursor:not-allowed;">
-                {% else %}
-                <input type="text" name="area" id="area" class="form-input" placeholder="Área / Departamento" value="">
-                {% endif %}
-            </div>
-            <div class="form-group">
-                <label class="form-label">Tipo<span class="required">*</span></label>
-                <select name="tipo" class="form-input" required>
-                    <option value="Permiso">Permiso</option>
-                    <option value="Licencia">Licencia</option>
-                    <option value="Médico">Médico</option>
-                    <option value="Personal">Personal</option>
-                    <option value="Capacitación">Capacitación</option>
-                    <option value="Calamidad doméstica">Calamidad doméstica</option>
-                    <option value="Otro">Otro</option>
-                </select>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label class="form-label">Fecha del permiso / licencia (desde)<span class="required">*</span></label>
-                <input type="date" name="fecha_desde" class="form-input" required>
-            </div>
-            <div class="form-group">
-                <label class="form-label">Fecha del permiso / licencia (hasta)<span class="required">*</span></label>
-                <input type="date" name="fecha_hasta" class="form-input" required>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="grid-column:1/-1">
-                <label class="form-label">¿Permiso remunerado?<span class="required">*</span></label>
-                <select name="permiso_remunerado" id="permisoRemunerado" class="form-input" required>
-                    <option value="">— Seleccionar —</option>
-                    <option value="1">Sí (remunerado)</option>
-                    <option value="0">No (no remunerado)</option>
-                </select>
-                <p class="form-hint" style="margin-top:6px">Si es <strong>no remunerado</strong>, deberá adjuntar evidencia (documento o imagen) que soporte la solicitud.</p>
-            </div>
-        </div>
-        <div class="form-row permiso-evidencia-row" id="rowEvidencia" style="display:none">
-            <div class="form-group" style="grid-column:1/-1">
-                <label class="form-label">Adjuntar evidencia<span class="required">*</span> <span class="form-hint">(PDF, JPG, PNG – máx. 5 MB)</span></label>
-                <input type="file" name="evidencia" id="evidencia" class="form-input" accept=".pdf,.jpg,.jpeg,.png">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label class="form-label">Hora de inicio</label>
-                <input type="time" name="hora_inicio" class="form-input" value="">
-            </div>
-            <div class="form-group">
-                <label class="form-label">Hora final</label>
-                <input type="time" name="hora_fin" class="form-input" value="">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="grid-column:1/-1">
-                <label class="form-label">Motivo</label>
-                <textarea name="motivo" class="form-input" rows="3" placeholder="Indique el motivo del permiso o licencia" style="resize:vertical"></textarea>
-            </div>
-        </div>
-        <div class="form-actions">
+
+        <div class="gh-formato-actions">
             <button type="submit" class="btn btn-primary">
                 <span class="material-symbols-outlined" style="font-size:18px">send</span>
                 Enviar solicitud
@@ -112,12 +219,32 @@
 (function() {
     var sel = document.getElementById('id_cedula');
     var area = document.getElementById('area');
+    var nombreCompleto = document.getElementById('nombreCompleto');
     if (sel && area) {
         sel.addEventListener('change', function() {
             var opt = sel.options[sel.selectedIndex];
-            var a = opt ? (opt.getAttribute('data-area') || '') : '';
-            area.value = a;
+            if (opt && opt.value) {
+                var a = opt.getAttribute('data-area') || '';
+                area.value = a;
+                var text = opt.textContent || opt.innerText;
+                var fullName = (opt.getAttribute('data-nombre') || '').trim();
+                if (nombreCompleto) nombreCompleto.value = fullName || text;
+            } else {
+                if (nombreCompleto) nombreCompleto.value = '';
+            }
         });
+    }
+    if (sel && nombreCompleto) {
+        function actualizarNombre() {
+            var opt = sel.options[sel.selectedIndex];
+            if (opt && opt.value) {
+                nombreCompleto.value = (opt.getAttribute('data-nombre') || '').trim();
+            } else {
+                nombreCompleto.value = '';
+            }
+        }
+        sel.addEventListener('change', actualizarNombre);
+        actualizarNombre();
     }
     var remunerado = document.getElementById('permisoRemunerado');
     var rowEvidencia = document.getElementById('rowEvidencia');

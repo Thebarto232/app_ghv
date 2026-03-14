@@ -3,12 +3,19 @@
 import os
 import re
 import smtplib
+from io import BytesIO
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
+from email.mime.image import MIMEImage
 from email import encoders
 from email.utils import formataddr
 from html import escape as html_escape
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
 
 # Colores y estilo para correos (Colbeef)
 _MAIL_STYLE = """
@@ -33,8 +40,74 @@ _MAIL_STYLE = """
   .mail-footer { padding: 16px 24px; background: #f9fafb; border-top: 1px solid #e5e7eb; font-size: 13px; color: #6b7280; }
   .mail-footer strong { color: #111; }
   .mail-divider { height: 1px; background: #e5e7eb; margin: 20px 0; }
+  .mail-signature { margin-top: 16px; padding-top: 10px; border-top: 1px solid #e5e7eb; }
+  .mail-sign-name { font-family: 'Brush Script MT','Segoe Script','Segoe UI',cursive; font-size: 22px; color: #111827; }
+  .mail-sign-role { font-size: 13px; color: #6b7280; }
+  .mail-sign-company { font-size: 13px; color: #111827; font-weight: 600; }
+  /* Informe formato GH-FR-007 (igual que el formulario) */
+  .informe-doc { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; margin: 0; }
+  .informe-header { display: table; width: 100%; padding: 16px 20px; border-bottom: 1px solid #e5e7eb; background: #fafafa; }
+  .informe-meta { font-size: 13px; }
+  .informe-meta .celda-izq { font-weight: 600; color: #111; }
+  .informe-meta .celda-der { color: #374151; }
+  .informe-titulo { padding: 14px 20px 8px; font-size: 17px; font-weight: 700; color: #0b3518; }
+  .informe-titulo-sub { padding: 0 20px 14px; font-size: 12px; color: #6b7280; }
+  .informe-body { padding: 12px 20px 20px; }
+  .informe-fila { margin-bottom: 12px; }
+  .informe-label { font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: .3px; margin-bottom: 2px; }
+  .informe-valor { font-size: 14px; color: #111; padding: 6px 0; border-bottom: 1px solid #e5e7eb; }
+  .informe-divider { height: 1px; background: #e5e7eb; margin: 20px 0 16px; }
+  .informe-firmas { display: table; width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+  .informe-firma-celda { display: table-cell; padding: 14px 12px; text-align: center; border-right: 1px solid #e5e7eb; background: #fafafa; vertical-align: top; width: 33%; }
+  .informe-firma-celda:last-child { border-right: none; }
+  .informe-firma-celda .tit { font-size: 11px; font-weight: 700; color: #374151; text-transform: uppercase; letter-spacing: .3px; margin-bottom: 8px; }
+  .informe-firma-celda .sub { font-size: 12px; color: #4b5563; margin-top: 8px; line-height: 1.4; }
+  .informe-firma-gh { background: #f0fdf4; }
+  .informe-firma-gh .tit { color: #166534; }
+  .informe-estado { display: inline-block; padding: 6px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+  .informe-estado.aprobado { background: #d1fae5; color: #047857; }
 </style>
 """
+
+
+def _fecha_display(val):
+    """Formatea fecha para mostrar en informe (DD-MM-YYYY)."""
+    if val is None:
+        return "—"
+    if hasattr(val, "strftime"):
+        return val.strftime("%d-%m-%Y")
+    s = str(val).strip()
+    if not s:
+        return "—"
+    if len(s) >= 10 and s[4] == "-" and s[7] == "-":
+        return f"{s[8:10]}-{s[5:7]}-{s[0:4]}"
+    return s
+
+
+def _cargar_imagen_firma(ruta):
+    """
+    Carga la imagen de firma con Pillow y devuelve bytes PNG para embeber en el correo.
+    La firma se muestra como imagen real (librería), no como HTML.
+    """
+    if not ruta or not os.path.isfile(ruta):
+        return None
+    if Image is not None:
+        try:
+            with Image.open(ruta) as img:
+                img.load()
+                buf = BytesIO()
+                if img.mode in ("RGBA", "P"):
+                    img.save(buf, "PNG")
+                else:
+                    img.convert("RGB").save(buf, "PNG")
+                return buf.getvalue()
+        except Exception:
+            pass
+    try:
+        with open(ruta, "rb") as f:
+            return f.read()
+    except Exception:
+        return None
 
 
 def _wrap_html(content_body, title, subtitle=""):
@@ -66,13 +139,14 @@ def _wrap_html(content_body, title, subtitle=""):
 </html>"""
 
 
-def send_mail(to_emails, subject, body_html, body_text=None, cc=None, app=None, attachments=None):
+def send_mail(to_emails, subject, body_html, body_text=None, cc=None, app=None, attachments=None, inline_images=None):
     """
     Envía un correo vía SMTP.
     to_emails: lista de correos o un solo string.
     cc: lista opcional de CC (para pruebas).
     app: instancia Flask (usa app.config). Si no se pasa, no envía.
     attachments: lista opcional de (nombre_archivo, ruta_archivo) para adjuntar al correo.
+    inline_images: lista opcional de (cid, ruta_archivo) para imágenes que se muestran en el HTML con src="cid:xxx".
     """
     if app is None:
         return False
@@ -94,7 +168,8 @@ def send_mail(to_emails, subject, body_html, body_text=None, cc=None, app=None, 
         cc_list = cc_list + [e.strip() for e in app.config["MAIL_PRUEBAS_CC"].split(",") if e.strip()]
     try:
         has_attachments = attachments and len(attachments) > 0
-        msg = MIMEMultipart("mixed" if has_attachments else "alternative")
+        has_inline = inline_images and len(inline_images) > 0
+        msg = MIMEMultipart("mixed" if has_attachments else ("related" if has_inline else "alternative"))
         msg["Subject"] = subject
         msg["From"] = formataddr(("Gestión Humana Colbeef", app.config.get("MAIL_FROM") or app.config.get("MAIL_USER")))
         msg["To"] = ", ".join(to_list)
@@ -103,7 +178,22 @@ def send_mail(to_emails, subject, body_html, body_text=None, cc=None, app=None, 
         if has_attachments:
             part_body = MIMEMultipart("alternative")
             part_body.attach(MIMEText(body_text or body_html, "plain", "utf-8"))
-            part_body.attach(MIMEText(body_html, "html", "utf-8"))
+            if has_inline:
+                part_related = MIMEMultipart("related")
+                part_related.attach(MIMEText(body_html, "html", "utf-8"))
+                for cid, ruta in inline_images:
+                    payload = _cargar_imagen_firma(ruta) if isinstance(ruta, str) else None
+                    if not payload:
+                        continue
+                    ext = os.path.splitext(ruta)[1].lower() if isinstance(ruta, str) else ".png"
+                    subtype = "png" if ext == ".png" else "jpeg"
+                    img_part = MIMEImage(payload, _subtype=subtype)
+                    img_part.add_header("Content-Disposition", "inline", filename=os.path.basename(ruta) if isinstance(ruta, str) else "firma.png")
+                    img_part.add_header("Content-ID", f"<{cid}>")
+                    part_related.attach(img_part)
+                part_body.attach(part_related)
+            else:
+                part_body.attach(MIMEText(body_html, "html", "utf-8"))
             msg.attach(part_body)
             for nombre, ruta in attachments:
                 if not ruta or not os.path.isfile(ruta):
@@ -114,6 +204,21 @@ def send_mail(to_emails, subject, body_html, body_text=None, cc=None, app=None, 
                 encoders.encode_base64(part)
                 part.add_header("Content-Disposition", "attachment", filename=nombre)
                 msg.attach(part)
+        elif has_inline:
+            msg.attach(MIMEText(body_text or body_html, "plain", "utf-8"))
+            part_related = MIMEMultipart("related")
+            part_related.attach(MIMEText(body_html, "html", "utf-8"))
+            for cid, ruta in inline_images:
+                payload = _cargar_imagen_firma(ruta) if isinstance(ruta, str) else None
+                if not payload:
+                    continue
+                ext = os.path.splitext(ruta)[1].lower() if isinstance(ruta, str) else ".png"
+                subtype = "png" if ext == ".png" else "jpeg"
+                img_part = MIMEImage(payload, _subtype=subtype)
+                img_part.add_header("Content-Disposition", "inline", filename=os.path.basename(ruta) if isinstance(ruta, str) else "firma.png")
+                img_part.add_header("Content-ID", f"<{cid}>")
+                part_related.attach(img_part)
+            msg.attach(part_related)
         else:
             msg.attach(MIMEText(body_text or body_html, "plain", "utf-8"))
             msg.attach(MIMEText(body_html, "html", "utf-8"))
@@ -239,9 +344,94 @@ def notificar_nueva_solicitud_permiso(app, solicitud, empleado_nombre, empleado_
     return ok
 
 
+def _body_informe_permiso_aprobado(solicitud, empleado_nombre, firma_img_html, fecha_resolucion_display, observaciones=None):
+    """
+    Genera el cuerpo del correo como informe del formulario GH-FR-007: mismo diseño que el formulario web.
+    Usa solo tablas y estilos inline para que Gmail y otros clientes muestren el diseño correctamente.
+    """
+    id_cedula = html_escape(str(solicitud.get("id_cedula") or "—"))
+    nombre = html_escape(empleado_nombre or "—")
+    area = html_escape(str(solicitud.get("area") or "—"))
+    tipo = html_escape(str(solicitud.get("tipo") or "Permiso"))
+    fecha_desde = _fecha_display(solicitud.get("fecha_desde"))
+    fecha_hasta = _fecha_display(solicitud.get("fecha_hasta"))
+    pr = solicitud.get("permiso_remunerado")
+    remunerado_txt = "Remunerado" if pr == 1 else ("No Remunerado" if pr == 0 else "—")
+    hora_inicio = (solicitud.get("hora_inicio") or "—")
+    if hasattr(hora_inicio, "strftime"):
+        hora_inicio = hora_inicio.strftime("%H:%M") if hora_inicio else "—"
+    else:
+        hora_inicio = str(hora_inicio) if hora_inicio else "—"
+    hora_fin = (solicitud.get("hora_fin") or "—")
+    if hasattr(hora_fin, "strftime"):
+        hora_fin = hora_fin.strftime("%H:%M") if hora_fin else "—"
+    else:
+        hora_fin = str(hora_fin) if hora_fin else "—"
+    motivo = html_escape(str(solicitud.get("motivo") or "—"))
+    # Estilos inline para compatibilidad con Gmail/Outlook
+    lbl = "font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:2px;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;"
+    val = "font-size:14px;color:#111;padding:6px 0;border-bottom:1px solid #e5e7eb;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;"
+    obs_row = ""
+    if observaciones:
+        obs_row = f'<tr><td colspan="3" style="padding:0 8px 12px 0;vertical-align:top"><p style="{lbl}margin:0">Observaciones</p><p style="{val}margin:0">{html_escape(observaciones)}</p></td></tr>'
+    return f"""
+<p style="margin:0 0 16px 0;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;"><span style="display:inline-block;padding:6px 12px;border-radius:8px;font-size:13px;font-weight:600;background:#d1fae5;color:#047857;">Permiso aprobado</span></p>
+<p style="margin:0 0 20px 0;font-size:14px;color:#374151;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;">Se adjunta el <strong>informe en PDF</strong> (Formato GH-FR-007) con los datos que diligenció y la firma digital de Coordinación Gestión Humana.</p>
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:720px;background:#fff;border:1px solid #e5e7eb;border-radius:12px;border-collapse:separate;border-spacing:0;overflow:hidden;">
+  <tr>
+    <td style="padding:16px 20px;border-bottom:1px solid #e5e7eb;background:#fafafa;">
+      <table cellpadding="0" cellspacing="0" border="0"><tr><td style="font-size:13px;font-weight:600;color:#111;">COLBEEF S.A.S</td><td style="font-size:13px;color:#374151;padding-left:16px;">Código: GH-FR-007</td></tr><tr><td style="font-size:13px;font-weight:600;color:#111;">GESTION HUMANA</td><td style="font-size:13px;color:#374151;padding-left:16px;">Versión: 01</td></tr></table>
+    </td>
+  </tr>
+  <tr>
+    <td style="padding:14px 20px 8px;font-size:17px;font-weight:700;color:#0b3518;font-family:Segoe UI,Tahoma,Geneva,Verdana,sans-serif;">FORMATO DE AUTORIZACION DE PERMISOS / LICENCIAS</td>
+  </tr>
+  <tr>
+    <td style="padding:0 20px 14px;font-size:12px;color:#6b7280;">Fecha: {html_escape(fecha_resolucion_display)}</td>
+  </tr>
+  <tr>
+    <td style="padding:12px 20px 20px;">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;">
+        <tr>
+          <td width="33%" style="padding:0 8px 12px 0;vertical-align:top;"><p style="{lbl}margin:0">Fecha</p><p style="{val}margin:0">{html_escape(fecha_resolucion_display)}</p></td>
+          <td width="33%" style="padding:0 8px 12px 0;vertical-align:top;"><p style="{lbl}margin:0">Área</p><p style="{val}margin:0">{area}</p></td>
+          <td width="34%" style="padding:0 0 12px 0;vertical-align:top;"><p style="{lbl}margin:0">Documento de Identidad</p><p style="{val}margin:0">{id_cedula}</p></td>
+        </tr>
+        <tr><td colspan="3" style="padding:0 8px 12px 0;vertical-align:top;"><p style="{lbl}margin:0">Nombre Completo</p><p style="{val}margin:0">{nombre}</p></td></tr>
+        <tr><td colspan="3" style="padding:0 8px 12px 0;vertical-align:top;"><p style="{lbl}margin:0">Fecha del permiso / Licencia</p><p style="{val}margin:0">{fecha_desde} a {fecha_hasta}</p></td></tr>
+        <tr><td colspan="3" style="padding:0 8px 12px 0;vertical-align:top;"><p style="{lbl}margin:0">Permiso remunerado / Permiso No Remunerado</p><p style="{val}margin:0">{html_escape(remunerado_txt)}</p></td></tr>
+        <tr><td colspan="3" style="padding:0 8px 12px 0;vertical-align:top;"><p style="{lbl}margin:0">Hora de Inicio / Hora Final</p><p style="{val}margin:0">{html_escape(str(hora_inicio))} – {html_escape(str(hora_fin))}</p></td></tr>
+        <tr><td colspan="3" style="padding:0 8px 12px 0;vertical-align:top;"><p style="{lbl}margin:0">Motivo</p><p style="{val}margin:0">{motivo}</p></td></tr>
+        <tr><td colspan="3" style="padding:0 8px 12px 0;vertical-align:top;"><p style="{lbl}margin:0">Tipo</p><p style="{val}margin:0">{tipo}</p></td></tr>
+        {obs_row}
+      </table>
+      <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:20px;border:1px solid #e5e7eb;border-radius:8px;border-collapse:collapse;">
+        <tr>
+          <td width="33%" style="padding:14px 12px;text-align:center;border-right:1px solid #e5e7eb;background:#fafafa;vertical-align:top;">
+            <p style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:0.3px;margin:0 0 8px 0;">Firma Solicitante</p>
+            <p style="font-size:12px;color:#4b5563;margin:8px 0 0;line-height:1.4;">Nombre: {nombre}<br>C.C: {id_cedula}</p>
+          </td>
+          <td width="33%" style="padding:14px 12px;text-align:center;border-right:1px solid #e5e7eb;background:#fafafa;vertical-align:top;">
+            <p style="font-size:11px;font-weight:700;color:#374151;text-transform:uppercase;letter-spacing:0.3px;margin:0 0 8px 0;">V.B Jefe Inmediato</p>
+            <p style="font-size:12px;color:#4b5563;margin:8px 0 0;">—</p>
+          </td>
+          <td width="34%" style="padding:14px 12px;text-align:center;background:#f0fdf4;vertical-align:top;">
+            <p style="font-size:11px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:0.3px;margin:0 0 8px 0;">Firma Recibido Gestión Humana</p>
+            {firma_img_html}
+            <p style="font-size:12px;color:#166534;margin:8px 0 0;line-height:1.4;">Coordinación de Gestión Humana<br>Colbeef</p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+"""
+
+
 def notificar_resolucion_permiso(app, solicitud, empleado_nombre, empleado_email, aprobado, observaciones=None, attachments=None):
     """Notifica al empleado que su solicitud fue aprobada o rechazada.
     El correo va al empleado (direccion_email en BD). Si está vacío, se usa el primer correo de MAIL_PRUEBAS_CC para pruebas.
+    Si aprobado=True, el cuerpo del correo es un informe con la estructura del formulario GH-FR-007, datos completos y firma digital.
     attachments: lista opcional de (nombre_archivo, ruta_archivo), ej. PDF firmado al aprobar."""
     original_email = (empleado_email or "").strip()
     if not original_email:
@@ -258,36 +448,50 @@ def notificar_resolucion_permiso(app, solicitud, empleado_nombre, empleado_email
     estado_label = "Aprobada" if aprobado else "Rechazada"
     badge_class = "aprobado" if aprobado else "rechazado"
     subject = f"Resolución: permiso {estado_label} – {empleado_nombre}"
-    tabla_filas = [
-        ("<th>Tipo de permiso</th>", f"<td>{html_escape(str(solicitud.get('tipo', 'Permiso')))}</td>"),
-        ("<th>Fecha desde</th>", f"<td>{html_escape(str(solicitud.get('fecha_desde', '—')))}</td>"),
-        ("<th>Fecha hasta</th>", f"<td>{html_escape(str(solicitud.get('fecha_hasta', '—')))}</td>"),
-    ]
-    if observaciones:
-        tabla_filas.append(("<th>Observaciones</th>", f"<td>{html_escape(observaciones)}</td>"))
-    rows_html = "".join(f"<tr>{th}{td}</tr>" for th, td in tabla_filas)
-    tabla = f'<table class="mail-table"><tbody>{rows_html}</tbody></table>'
-    mensaje_estado = (
-        "Su solicitud de permiso ha sido <strong>aprobada</strong>. Puede proceder según lo indicado en su solicitud."
-        if aprobado
-        else "Su solicitud de permiso no ha sido aprobada. Si tiene dudas o desea más información, puede contactar a Coordinación Gestión Humana."
+    # Firma digital: imagen para informe (aprobado) o mensaje breve (rechazado)
+    root = getattr(app, "root_path", None) or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    firma_en_raiz = os.path.join(root, "firma digital cindy.png")
+    firma_cfg = (app.config.get("SIGNATURE_IMAGE_PATH") or "").strip()
+    firma_path = firma_en_raiz if os.path.isfile(firma_en_raiz) else (firma_cfg if firma_cfg and os.path.isfile(firma_cfg) else None)
+    inline_images = [("firma_gh", firma_path)] if firma_path else []
+    firma_img_html = (
+        '<div style="margin:8px 0 6px"><img src="cid:firma_gh" alt="Firma Coordinación" style="max-height:72px; display:block;"></div>'
+        if firma_path
+        else '<div class="mail-sign-name" style="margin:8px 0">Coordinación Gestión Humana</div>'
     )
-    nombre_safe = html_escape(empleado_nombre)
-    body_content = f"""
+    if not aprobado:
+        inline_images = []
+    try:
+        from datetime import datetime
+        fecha_resolucion_display = datetime.now().strftime("%d-%m-%Y")
+    except Exception:
+        fecha_resolucion_display = _fecha_display(solicitud.get("fecha_resolucion"))
+    if aprobado:
+        body_content = _body_informe_permiso_aprobado(solicitud, empleado_nombre, firma_img_html, fecha_resolucion_display, observaciones=observaciones)
+    else:
+        tabla_filas = [
+            ("<th>Tipo de permiso</th>", f"<td>{html_escape(str(solicitud.get('tipo', 'Permiso')))}</td>"),
+            ("<th>Fecha desde</th>", f"<td>{html_escape(str(solicitud.get('fecha_desde', '—')))}</td>"),
+            ("<th>Fecha hasta</th>", f"<td>{html_escape(str(solicitud.get('fecha_hasta', '—')))}</td>"),
+        ]
+        if observaciones:
+            tabla_filas.append(("<th>Observaciones</th>", f"<td>{html_escape(observaciones)}</td>"))
+        rows_html = "".join(f"<tr>{th}{td}</tr>" for th, td in tabla_filas)
+        tabla = f'<table class="mail-table"><tbody>{rows_html}</tbody></table>'
+        nombre_safe = html_escape(empleado_nombre)
+        body_content = f"""
     <p>Estimado/a <strong>{nombre_safe}</strong>,</p>
     <p>Coordinación Gestión Humana ha resuelto su solicitud de permiso/licencia.</p>
     <p><span class="mail-badge {badge_class}">{estado_label}</span></p>
-    <p>{mensaje_estado}</p>
+    <p>Su solicitud de permiso no ha sido aprobada. Si tiene dudas o desea más información, puede contactar a Coordinación Gestión Humana.</p>
     {tabla}
-    <div class="mail-divider"></div>
-    <p>Saludos cordiales,<br/><strong>Gestión Humana – Colbeef</strong></p>
     """
-    body = _wrap_html(body_content, title=subject, subtitle=f"Solicitud de permiso {estado_label}")
+    body = _wrap_html(body_content, title=subject, subtitle=f"Informe de permiso {estado_label}" if aprobado else f"Solicitud de permiso {estado_label}")
     plain = _strip_html(body_content)
     id_sol = solicitud.get("id")
     if app and hasattr(app, "logger"):
         app.logger.info(f"[Permisos] Resolución solicitud id={id_sol} → enviando a {empleado_email} ({estado})")
-    ok = send_mail(empleado_email, subject, body, body_text=plain, app=app, attachments=attachments or [])
+    ok = send_mail(empleado_email, subject, body, body_text=plain, app=app, attachments=attachments or [], inline_images=inline_images)
     if app and hasattr(app, "logger"):
         app.logger.info(f"[Permisos] Resolución id={id_sol} → resultado_enviado={ok}")
     return ok

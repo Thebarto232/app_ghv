@@ -9,7 +9,7 @@ import re
 import os
 import mysql.connector
 import io
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -19,6 +19,36 @@ import tempfile
 
 app = Flask(__name__)
 app.config.from_object(Config)
+app.permanent_session_lifetime = timedelta(minutes=app.config.get("SESSION_TIMEOUT_MINUTES", 30))
+
+
+@app.before_request
+def enforce_session_timeout():
+    """Cierra sesión cuando se supera el tiempo de inactividad configurado."""
+    timeout_minutes = int(app.config.get("SESSION_TIMEOUT_MINUTES", 30))
+    if timeout_minutes <= 0:
+        return None
+
+    # Evitar bucles en login/logout y excluir recursos estáticos.
+    if request.endpoint in {"login", "logout", "register", "static"}:
+        return None
+
+    if "user_id" not in session:
+        return None
+
+    now_ts = datetime.utcnow().timestamp()
+    last_activity = session.get("last_activity_ts")
+
+    if last_activity and (now_ts - float(last_activity) > timeout_minutes * 60):
+        session.clear()
+        if _is_api_request():
+            return jsonify({"error": "Sesion expirada por inactividad"}), 401
+        flash("Sesion expirada por inactividad. Inicia sesion de nuevo.", "warning")
+        return redirect(url_for("login"))
+
+    session["last_activity_ts"] = now_ts
+    session.permanent = True
+    return None
 
 
 # ── DB helpers ────────────────────────────────────────────────

@@ -34,3 +34,5 @@ class Config:
     # Firma digital sobre PDF: ruta a imagen de firma (PNG/JPG) para estampar en el formato de permiso al aprobar.
     # Si está vacío, no se genera PDF firmado. Ej.: instance/static/firma_coordinacion.png o ruta absoluta.
     SIGNATURE_IMAGE_PATH = (os.getenv("SIGNATURE_IMAGE_PATH") or "").strip()
+    # Cierre automático de sesión por inactividad (minutos).
+    SESSION_TIMEOUT_MINUTES = int(os.getenv("SESSION_TIMEOUT_MINUTES", "30"))

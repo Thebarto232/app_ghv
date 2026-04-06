@@ -328,6 +328,7 @@ _DEFAULT_MODULES = {k: False for k in [
     "familia", "eventos", "eps", "fondos",
     "reportes", "dashboard", "total_hijos", "admin", "admin_usuarios", "permisos",
     "incidencias", "incidencias_dashboard", "suite_principal",
+    "locker",
 ]}
 
 
@@ -350,6 +351,15 @@ def _rol_match(rol_from_db):
         if _normalize_rol(key) == norm:
             return key
     return rol_from_db
+
+
+def _is_locker_user(user):
+    """Solo el correo MAIL_GESTOR_CONTRATACION (ej. gestor.contratacion@colbeef.com) ve el botón Locker."""
+    if not user:
+        return False
+    email = (user.get("email") or "").strip().lower()
+    gestor_mail = (app.config.get("MAIL_GESTOR_CONTRATACION") or "").strip().lower()
+    return bool(gestor_mail) and email == gestor_mail
 
 
 def _get_effective_modules(rol):
@@ -427,6 +437,7 @@ def inject_user():
         vm = _get_effective_modules(rol)
         # Acceso directo a la suite principal (todos los usuarios autenticados)
         vm["suite_principal"] = True
+        vm["locker"] = _is_locker_user(user)
         # Usuario Siso@colbeef.com: siempre ve el módulo Incidencias (aunque su rol sea GESTOR SST u otro)
         if (user.get("email") or "").strip().lower() == "siso@colbeef.com":
             vm["incidencias"] = True
@@ -504,6 +515,21 @@ def logout():
     session.clear()
     flash("Sesión cerrada", "info")
     return redirect(url_for("login"))
+
+
+@app.route("/locker")
+@login_required
+def locker():
+    """Redirige a la URL configurada; solo el usuario con correo MAIL_GESTOR_CONTRATACION."""
+    user = get_current_user()
+    if not _is_locker_user(user):
+        flash("No tienes acceso a este enlace.", "error")
+        return redirect(url_for("home"))
+    url = (app.config.get("GESTOR_CONTRATACION_PORTAL_URL") or "").strip()
+    if not url:
+        flash("Locker no configurado.", "warning")
+        return redirect(url_for("home"))
+    return redirect(url)
 
 
 @app.route("/cambiar-clave", methods=["GET", "POST"])

@@ -103,6 +103,12 @@
                 <span class="nav-label">Suite Principal</span>
             </a>
             {% endif %}
+            {% if vm.locker %}
+            <a href="{{ url_for('locker') }}" class="nav-item nav-item-locker" target="_blank" rel="noopener noreferrer">
+                <span class="material-symbols-outlined">lock</span>
+                <span class="nav-label">Locker</span>
+            </a>
+            {% endif %}
         </div>
 
         {% if vm.organizacion %}

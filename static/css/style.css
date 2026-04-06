@@ -612,6 +612,12 @@ a { color: inherit; text-decoration: none; }
 }
 .nav-item.active .material-symbols-outlined { color: var(--primary); }
 
+.nav-item.nav-item-locker {
+    background: rgba(139, 69, 19, 0.06);
+    border-left: 3px solid var(--primary);
+    padding-left: 17px;
+}
+
 /* ── CONTENT ─────────────────────────────────────────────── */
 
 .content {

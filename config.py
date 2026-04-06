@@ -23,7 +23,8 @@ class Config:
     # Quién recibe la notificación "Nueva solicitud" (los dos reciben el mismo correo).
     # Coordinación GH = quien APRUEBA o rechaza. Contratación = quien le dice al empleado "llene acá" el formato.
     MAIL_GH_PERMISOS = os.getenv("MAIL_GH_PERMISOS", "coordinacion.gestionhumana@colbeef.com")
-    MAIL_GESTOR_CONTRATACION = os.getenv("MAIL_GESTOR_CONTRATACION", "gestor.contratacion@colbeef.com")
+    # Si en .env está vacío, getenv devuelve "" y el default no aplica; forzar fallback.
+    MAIL_GESTOR_CONTRATACION = (os.getenv("MAIL_GESTOR_CONTRATACION") or "gestor.contratacion@colbeef.com").strip().lower()
     # Página externa al hacer clic en Locker (solo usuario con MAIL_GESTOR_CONTRATACION).
     GESTOR_CONTRATACION_PORTAL_URL = (
         os.getenv("GESTOR_CONTRATACION_PORTAL_URL") or "http://192.168.20.205:8000/site.html"

@@ -353,13 +353,21 @@ def _rol_match(rol_from_db):
     return rol_from_db
 
 
+def _normalize_email(s):
+    if s is None:
+        return ""
+    return " ".join(str(s).split()).strip().lower()
+
+
 def _is_locker_user(user):
-    """Solo el correo MAIL_GESTOR_CONTRATACION (ej. gestor.contratacion@colbeef.com) ve el botón Locker."""
+    """Locker: correo igual a MAIL_GESTOR_CONTRATACION o rol GESTOR DE CONTRATACION (evita fallos si .env está mal)."""
     if not user:
         return False
-    email = (user.get("email") or "").strip().lower()
-    gestor_mail = (app.config.get("MAIL_GESTOR_CONTRATACION") or "").strip().lower()
-    return bool(gestor_mail) and email == gestor_mail
+    email = _normalize_email(user.get("email"))
+    gestor_mail = _normalize_email(app.config.get("MAIL_GESTOR_CONTRATACION") or "gestor.contratacion@colbeef.com")
+    if gestor_mail and email == gestor_mail:
+        return True
+    return _rol_match(user.get("rol")) == "GESTOR DE CONTRATACION"
 
 
 def _get_effective_modules(rol):

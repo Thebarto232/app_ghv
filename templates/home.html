@@ -26,6 +26,17 @@
         </div>
     </a>
     {% endif %}
+    {% if vm.locker %}
+    <a href="{{ url_for('locker') }}" class="home-card" target="_blank" rel="noopener noreferrer">
+        <div class="home-card-img" style="background: linear-gradient(135deg, #fffbeb, #fef3c7); border: 2px solid #fbbf24">
+            <span class="material-symbols-outlined" style="color:#b45309">lock</span>
+        </div>
+        <div class="home-card-label">
+            <span class="card-dot orange"></span>
+            Locker
+        </div>
+    </a>
+    {% endif %}
     {% if vm.eventos %}
     <a href="{{ url_for('cumpleanos') }}" class="home-card">
         <div class="home-card-img" style="background: linear-gradient(135deg, #fff5f5, #ffe4e6)">
